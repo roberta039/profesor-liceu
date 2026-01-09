@@ -1,103 +1,87 @@
 import streamlit as st
-import base64
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import HumanMessage, SystemMessage
+import google.generativeai as genai
+from PIL import Image
 
 # 1. Configurare Pagină
 st.set_page_config(page_title="Profesorul de Mate (Gemini)", page_icon="🎓")
-st.title("🎓 Proful de Mate - Google Gemini Edition")
-st.caption("Rezolvă probleme din poze folosind Gemini 1.5 Flash")
+st.title("🎓 Proful de Mate - Gemini Native")
+st.caption("Rezolvă probleme din poze folosind biblioteca oficială Google")
 
-# 2. Configurare API Key (GOOGLE)
+# 2. Configurare API Key
+# Încercăm să luăm cheia din Secrets, altfel o cerem în sidebar
 if "GOOGLE_API_KEY" in st.secrets:
     api_key = st.secrets["GOOGLE_API_KEY"]
 else:
     api_key = st.sidebar.text_input("Introdu Google API Key:", type="password")
-    st.sidebar.markdown("[Obține cheia aici](https://aistudio.google.com/app/apikey)")
 
 if not api_key:
     st.info("Introdu cheia Google API pentru a începe.")
     st.stop()
 
-# 3. Inițializarea Modelului Gemini
-# Folosim gemini-1.5-flash care este rapid, gratis și vede poze
+# Configurare Google GenAI
 try:
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-1.5-flash",
-        google_api_key=api_key,
-        temperature=0.3
+    genai.configure(api_key=api_key)
+    # Inițializăm modelul cu instrucțiuni de sistem (Persona)
+    model = genai.GenerativeModel(
+        'gemini-1.5-flash',
+        system_instruction="""Ești un profesor de matematică expert și răbdător.
+        1. Când primești o imagine, analizează ecuațiile sau geometria din ea.
+        2. Rezolvă problema pas cu pas.
+        3. Explică logica într-un mod simplu, în limba română.
+        4. Folosește LaTeX pentru formule matematice clare.
+        """
     )
 except Exception as e:
-    st.error(f"Eroare la conectare: {e}")
+    st.error(f"Eroare la configurare: {e}")
     st.stop()
 
-# Funcție helper pentru imagine
-def get_image_base64(uploaded_file):
-    try:
-        return base64.b64encode(uploaded_file.getvalue()).decode()
-    except Exception as e:
-        st.error(f"Eroare la procesarea imaginii: {e}")
-        return None
+# 3. Interfața de Upload
+st.sidebar.header("Zona de Lucru")
+uploaded_file = st.sidebar.file_uploader("Încarcă o poză cu problema", type=["jpg", "jpeg", "png"])
 
-# 4. Interfața
-st.sidebar.header("Încarcă Exercițiul")
-uploaded_file = st.sidebar.file_uploader("Poză (JPG/PNG)", type=["jpg", "jpeg", "png"])
-
-image_data = None
+img = None
 if uploaded_file:
-    st.sidebar.image(uploaded_file, caption="Imagine încărcată", use_container_width=True)
-    image_data = get_image_base64(uploaded_file)
+    # Încărcăm imaginea folosind PIL (Pillow)
+    img = Image.open(uploaded_file)
+    st.sidebar.image(img, caption="Imaginea ta", use_container_width=True)
     st.sidebar.success("Imagine pregătită!")
 
-# 5. Chat History
+# 4. Istoric Chat
 if "messages" not in st.session_state:
     st.session_state["messages"] = [
-        {"role": "assistant", "content": "Salut! Încarcă o poză cu o ecuație sau scrie problema și te ajut să o rezolvi."}
+        {"role": "assistant", "content": "Salut! Sunt gata. Poți să încarci o poză sau să scrii o problemă."}
     ]
 
 for msg in st.session_state.messages:
-    st.chat_message(msg["role"]).write(msg["content"])
+    # Google folosește "model" în loc de "assistant" în unele contexte, dar noi păstrăm convenția vizuală
+    role = msg["role"]
+    st.chat_message(role).write(msg["content"])
 
-# 6. Procesare
-if user_input := st.chat_input("Scrie aici..."):
-    # Afișăm user
+# 5. Input și Generare
+if user_input := st.chat_input("Întreabă profesorul..."):
+    # Afișăm mesajul utilizatorului
     st.session_state.messages.append({"role": "user", "content": user_input})
     st.chat_message("user").write(user_input)
 
-    # Pregătim mesajul pentru AI
-    content_parts = []
-    
-    # Adăugăm textul utilizatorului
-    content_parts.append({"type": "text", "text": user_input})
-
-    # Adăugăm imaginea dacă există
-    if image_data:
-        content_parts.append({
-            "type": "image_url",
-            "image_url": f"data:image/jpeg;base64,{image_data}"
-        })
-        note = " (Analizez și imaginea...)"
+    # Pregătim inputul pentru Gemini
+    # Gemini acceptă o listă care poate conține text și imagini
+    inputs = [user_input]
+    if img:
+        inputs.append(img)
+        note = " (analizez imaginea...)"
     else:
         note = ""
 
-    # Instrucțiunile profesorului
-    system_instruction = """Ești un profesor de matematică excelent.
-    1. Dacă primești o imagine, identifică problema matematică.
-    2. Rezolvă pas cu pas, explicând logica.
-    3. Scrie formulele clar (LaTeX).
-    4. Răspunde în limba română.
-    """
-    
-    messages = [
-        SystemMessage(content=system_instruction),
-        HumanMessage(content=content_parts)
-    ]
-
     with st.chat_message("assistant"):
-        with st.spinner(f"Profesorul gândește...{note}"):
+        with st.spinner(f"Calculez soluția...{note}"):
             try:
-                response = llm.invoke(messages)
-                st.write(response.content)
-                st.session_state.messages.append({"role": "assistant", "content": response.content})
+                # Apelăm direct API-ul Google
+                response = model.generate_content(inputs)
+                
+                # Extragem textul
+                response_text = response.text
+                
+                st.write(response_text)
+                st.session_state.messages.append({"role": "assistant", "content": response_text})
             except Exception as e:
-                st.error(f"Eroare: {e}")
+                st.error(f"Eroare la generare: {e}")
