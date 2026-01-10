@@ -79,7 +79,7 @@ if uploaded_file:
 
 # 4. Chat History
 if "messages" not in st.session_state:
-    st.session_state["messages"] = [{"role": "assistant", "content": f"Salut! Folosesc modelul {selected_model_name}. Cu ce te ajut?"}]
+    st.session_state["messages"] = [{"role": "assistant", "content": f"Salut! Folosesc {selected_model_name}. Cu ce te ajut?"}]
 
 for msg in st.session_state.messages:
     st.chat_message(msg["role"]).write(msg["content"])
