@@ -3,24 +3,44 @@ import google.generativeai as genai
 from PIL import Image
 
 # 1. Configurare Pagină
-st.set_page_config(page_title="Profesorul de Mate (Manual)", page_icon="📐")
-st.title("📐 Proful de Mate - Selectare Manuală")
+st.set_page_config(page_title="Profesorul de Mate", page_icon="📐")
+st.title("📐 Proful de Mate")
 
-# 2. Configurare API Key
+# 2. Configurare API Key (AUTOMATĂ)
+# Logica: Caută întâi în "Secrets". Dacă nu e acolo, cere în Sidebar.
+api_key = None
+
 if "GOOGLE_API_KEY" in st.secrets:
     api_key = st.secrets["GOOGLE_API_KEY"]
+    # Opțional: Mesaj discret că s-a conectat
+    # st.sidebar.success("✅ API Key conectat automat") 
 else:
     api_key = st.sidebar.text_input("Introdu Google API Key:", type="password")
+    st.sidebar.warning("Sfat: Configurează 'Secrets' în Streamlit Cloud ca să nu introduci cheia mereu.")
 
+# Dacă tot nu avem cheie, oprim execuția
 if not api_key:
-    st.info("Introdu cheia Google API.")
     st.stop()
 
 # Configurare Google
 try:
     genai.configure(api_key=api_key)
 except Exception as e:
-    st.error(f"Eroare cheie: {e}")
+    st.error(f"Eroare la cheie: {e}")
+
+# ---------------------------------------------------------
+# De aici în jos rămâne codul tău cu SELECTORUL MANUAL care ți-a plăcut
+# ---------------------------------------------------------
+
+# 3. SELECTOR MANUAL DE MODEL
+st.sidebar.header("⚙️ Setări")
+
+model_options = [
+    "gemini-1.5-flash",          
+    "gemini-1.5-pro",
+    "models/gemini-1.5-flash",   
+    "models/gemini-1.5-flash-latest"
+]
 
 # 3. SELECTOR MANUAL DE MODEL (Fără auto-detecție)
 st.sidebar.header("⚙️ Alege Modelul")
