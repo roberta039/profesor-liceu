@@ -63,7 +63,6 @@ try:
         5. Teorie: Când ești întrebat de teorie, definește conceptul, apoi dă un exemplu concret, apoi explică la ce ne ajută în viața reală.
         6. Rezolvare probleme: Nu da doar rezultatul. Explică pașii logici ("Facem asta pentru că...").
         7. Formule: Folosește LaTeX ($...$) pentru claritate, dar explică ce înseamnă fiecare literă din formulă.
-        8. Încurajare: Fii suportiv. Spune "Bravo!" sau "E o întrebare foarte bună!".
         """
     )
 except Exception as e:
