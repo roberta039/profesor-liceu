@@ -3,8 +3,8 @@ import google.generativeai as genai
 from PIL import Image
 
 # 1. Configurare Pagină
-st.set_page_config(page_title="Profesor Universal (Manual + Auto)", page_icon="🎓")
-st.title("🎓 Profesor Universal (Selector)")
+st.set_page_config(page_title="Profesor Universal (Filtered)", page_icon="🎓")
+st.title("🎓 Profesor Universal")
 
 # 2. Configurare API Key
 if "GOOGLE_API_KEY" in st.secrets:
@@ -22,38 +22,42 @@ except Exception as e:
     st.error(f"Eroare la configurare cheie: {e}")
     st.stop()
 
-# --- ZONA DE LISTARE INTELIGENTĂ (Găsește modelele noi, dar te lasă să alegi) ---
+# --- ZONA DE LISTARE INTELIGENTĂ CU FILTRE ---
 st.sidebar.header("⚙️ Alege Modelul")
 
 @st.cache_data
 def get_available_models():
-    # 1. Lista modelelor sigure care știm că merg bine gratis
+    # 1. Lista modelelor sigure care știm că VĂD poze
     priority_list = ["models/gemini-2.0-flash-exp", "models/gemini-1.5-flash", "models/gemini-1.5-pro"]
     found_list = []
     
+    # Cuvinte interzise (modele care nu ne trebuie la Mate)
+    blacklist = ["tts", "audio", "embedding", "aqa", "speaker", "vision-only"]
+    
     try:
-        # 2. Întrebăm Google ce altceva mai are nou (ex: gemini-3)
         for m in genai.list_models():
             if 'generateContent' in m.supported_generation_methods:
-                if "gemini" in m.name and "embedding" not in m.name:
-                    found_list.append(m.name)
+                name = m.name.lower()
+                # Verificăm să fie Gemini
+                if "gemini" in name:
+                    # Verificăm să NU fie în lista neagră
+                    if not any(bad_word in name for bad_word in blacklist):
+                        found_list.append(m.name)
     except:
-        pass # Dacă pică netul, rămânem cu lista prioritară
+        pass
     
-    # 3. Combinăm: Prioritarele primele, apoi restul (fără duplicate)
-    # Sortăm found_list invers ca să vedem versiunile noi (3.0) sus
     found_list.sort(reverse=True)
+    # Eliminăm duplicatele și punem prioritarele primele
     final_list = list(dict.fromkeys(priority_list + found_list))
     
     return final_list
 
 available_models = get_available_models()
 
-# Aici e puterea ta: TU alegi modelul.
-# Dacă Gemini 3 dă eroare, alegi Flash și gata.
+# Selectorul Manual
 selected_model_name = st.sidebar.selectbox("Model:", available_models, index=0)
 
-# Verificăm dacă modelul s-a schimbat pentru a curăța chat-ul
+# Verificăm schimbarea modelului pentru refresh
 if "last_model" not in st.session_state:
     st.session_state["last_model"] = selected_model_name
 
@@ -112,7 +116,11 @@ if user_input := st.chat_input("Scrie problema..."):
                 st.write(response.text)
                 st.session_state.messages.append({"role": "assistant", "content": response.text})
             except Exception as e:
-                # Aici prindem eroarea de cotă (Free Tier)
+                # Tratarea erorilor specifice
+                err_msg = str(e).lower()
                 st.error(f"Eroare: {e}")
-                if "429" in str(e) or "quota" in str(e).lower():
-                    st.warning("⚠️ Ai atins limita pentru acest model sau nu este disponibil gratuit. Te rog selectează 'gemini-1.5-flash' din meniul din stânga.")
+                
+                if "image input modality is not enabled" in err_msg:
+                    st.warning("⚠️ Modelul selectat este 'ORB' (nu suportă imagini). Te rog selectează un model 'Flash' sau 'Pro' din listă.")
+                elif "quota" in err_msg or "429" in err_msg:
+                    st.warning("⚠️ Limita gratuită atinsă pentru acest model. Schimbă pe 'gemini-1.5-flash'.")
