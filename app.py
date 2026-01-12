@@ -3,8 +3,8 @@ import google.generativeai as genai
 from PIL import Image
 
 # 1. Configurare Pagină
-st.set_page_config(page_title="Profesor Universal (2.5 Flash)", page_icon="⚡")
-st.title("⚡ Profesor Universal")
+st.set_page_config(page_title="Profesorul tau Universal (2.5 Flash)", page_icon="⚡")
+st.title("⚡ Profesorul tau Universal")
 st.caption("Powered by Gemini 2.5 Flash")
 
 # 2. Configurare API Key
