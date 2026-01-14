@@ -3,9 +3,9 @@ import google.generativeai as genai
 from PIL import Image
 
 # 1. Configurare Pagină
-st.set_page_config(page_title="Profesorul tau Universal (2.5 Flash)", page_icon="⚡")
-st.title("⚡ Profesorul tau Universal")
-st.caption("Powered by Gemini 2.5 Flash")
+st.set_page_config(page_title="Profesor Universal (Contextual)", page_icon="🧠")
+st.title("🧠 Profesor Universal")
+st.caption("Powered by Gemini 2.5 Flash | Memorie Text + Focus Vizual")
 
 # 2. Configurare API Key
 if "GOOGLE_API_KEY" in st.secrets:
@@ -23,8 +23,7 @@ except Exception as e:
     st.error(f"Eroare la configurare cheie: {e}")
     st.stop()
 
-# --- INITIALIZARE MODEL (FIX: GEMINI 2.5 FLASH) ---
-# Nu mai există selector. Folosim direct acest ID.
+# --- INITIALIZARE MODEL ---
 FIXED_MODEL_ID = "models/gemini-2.5-flash"
 
 try:
@@ -51,38 +50,64 @@ try:
         """
     )
 except Exception as e:
-    st.error(f"Eroare critică: Nu pot inițializa modelul {FIXED_MODEL_ID}. Verifică dacă numele este corect sau dacă ai acces la el.")
+    st.error(f"Eroare critică: {e}")
     st.stop()
 
 # 3. Interfața de Upload
 st.sidebar.header("📁 Materiale")
-uploaded_file = st.sidebar.file_uploader("Încarcă o poză", type=["jpg", "jpeg", "png"])
+uploaded_file = st.sidebar.file_uploader("Încarcă o poză (Doar pentru întrebarea curentă)", type=["jpg", "jpeg", "png"])
 
 img = None
 if uploaded_file:
     img = Image.open(uploaded_file)
-    st.sidebar.image(img, caption="Imagine încărcată", use_container_width=True)
+    st.sidebar.image(img, caption="Imagine de analizat", use_container_width=True)
 
-# 4. Chat History
+# 4. Chat History (UI)
 if "messages" not in st.session_state:
-    st.session_state["messages"] = [{"role": "assistant", "content": "Salut! Cu ce te ajut?"}]
+    st.session_state["messages"] = []
 
+# Afișăm conversația pe ecran
 for msg in st.session_state.messages:
     st.chat_message(msg["role"]).write(msg["content"])
 
-# 5. Input
+# 5. Input și Logica de Construire a Istoricului
 if user_input := st.chat_input("Scrie problema..."):
+    # A. Afișăm mesajul utilizatorului în UI
     st.session_state.messages.append({"role": "user", "content": user_input})
     st.chat_message("user").write(user_input)
 
-    inputs = [user_input]
-    if img:
-        inputs.append(img)
+    # B. CONSTRUIM ISTORICUL PENTRU MODEL (The Smart Part)
+    # Vom crea o listă 'contents' pe care o trimitem la Google.
+    conversation_payload = []
 
+    # 1. Adăugăm mesajele VECHI (Doar text, pentru context)
+    # Ignorăm ultimul mesaj adăugat acum, pentru că îl procesăm special cu poza
+    for msg in st.session_state.messages[:-1]:
+        # Convertim rolurile: "assistant" -> "model", "user" -> "user"
+        role = "model" if msg["role"] == "assistant" else "user"
+        conversation_payload.append({
+            "role": role,
+            "parts": [msg["content"]]
+        })
+
+    # 2. Adăugăm mesajul CURENT (Text + Imagine dacă există)
+    current_parts = [user_input]
+    if img:
+        current_parts.append(img) # Aici atașăm imaginea DOAR acum
+    
+    conversation_payload.append({
+        "role": "user",
+        "parts": current_parts
+    })
+
+    # C. Trimitem tot pachetul la Model
     with st.chat_message("assistant"):
-        with st.spinner("Rezolv..."):
+        with st.spinner("Gândesc..."):
             try:
-                response = model.generate_content(inputs)
+                # generate_content acceptă o listă de mesaje pentru chat history
+                response = model.generate_content(conversation_payload)
+                
+                # Afișăm și salvăm răspunsul
                 st.write(response.text)
                 st.session_state.messages.append({"role": "assistant", "content": response.text})
             except Exception as e:
