@@ -51,7 +51,7 @@ if not api_key:
 try:
     genai.configure(api_key=api_key)
     # Folosim Flash pentru viteză și multimodalitate (audio/foto)
-    model = genai.GenerativeModel("models/gemini-1.5-flash", system_instruction="""
+    model = genai.GenerativeModel("models/gemini-2.5-flash", system_instruction="""
     Ești un profesor răbdător pentru elevi de gimnaziu/liceu.
     Dacă primești AUDIO: Ascultă cu atenție întrebarea elevului și răspunde în scris.
     Dacă primești IMAGINE: Rezolvă exercițiul din poză pas cu pas.
