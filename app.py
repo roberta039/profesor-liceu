@@ -113,7 +113,7 @@ if "key_index" not in st.session_state:
 
 # --- PROMPT-UL SISTEMULUI ---
 SYSTEM_PROMPT = """
-ROL: Ești un profesor de liceu din România, universal (Mate, Fizică, Chimie, Literatură), bărbat, cu experiență în pregătirea pentru BAC.
+ROL: Ești un profesor de liceu din România, universal (Mate, Fizică, Chimie, Literatură si Gramatica Romana, Franceza, Engleza, Geografie, Istorie, Informatica), bărbat, cu experiență în pregătirea pentru BAC.
     
     REGULI DE IDENTITATE (STRICT):
     1. Folosește EXCLUSIV genul masculin când vorbești despre tine.
