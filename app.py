@@ -72,16 +72,71 @@ else:
     st.session_state.session_id = st.query_params["session_id"]
 
 # ==========================================
-# 3. Configurare API
+# 3. Configurare API cu ROTIRE AUTOMATĂ
 # ==========================================
-if "GOOGLE_API_KEYS" in st.secrets:
-    api_key = st.secrets["GOOGLE_API_KEYS"]
-else:
-    api_key = st.sidebar.text_input("Introdu Google API Key:", type="password")
 
-if not api_key:
-    st.info("👋 Introdu cheia API pentru a începe.")
+# 1. Încărcăm lista de chei
+if "api_keys" in st.secrets:
+    keys = st.secrets["api_keys"]
+else:
+    # Fallback dacă testezi local fără secrets și vrei input manual (doar prima cheie)
+    k = st.sidebar.text_input("API Key:", type="password")
+    keys = [k] if k else []
+
+if not keys:
+    st.info("Lipsesc cheile API.")
     st.stop()
+
+# 2. Gestionăm indexul cheii curente în sesiune
+if "key_index" not in st.session_state:
+    st.session_state.key_index = 0
+
+def configure_current_key():
+    current_key = keys[st.session_state.key_index]
+    genai.configure(api_key=current_key)
+
+# Configurăm inițial cu prima cheie (sau cea la care am rămas)
+configure_current_key()
+
+# Definim Modelul (Aici pui System Instruction-ul tău mare)
+model = genai.GenerativeModel("models/gemini-1.5-flash", 
+    system_instruction="... (AICI PUI PROMPTUL TĂU MARE) ..."
+)
+
+# --- FUNCȚIE MAGICĂ PENTRU RETRY ---
+def send_message_with_rotation(chat_session, payload):
+    """
+    Această funcție încearcă să trimită mesajul.
+    Dacă eșuează din cauza limitei, schimbă cheia și încearcă din nou.
+    """
+    max_retries = len(keys) # Încercăm maxim o dată pe fiecare cheie
+    
+    for attempt in range(max_retries):
+        try:
+            # Încercăm să generăm răspunsul
+            response = chat_session.send_message(payload)
+            return response
+            
+        except Exception as e:
+            error_msg = str(e)
+            # Verificăm dacă eroarea este de cotă (429) sau resursă epuizată
+            if "429" in error_msg or "ResourceExhausted" in error_msg or "Quota" in error_msg:
+                print(f"⚠️ Cheia {st.session_state.key_index} a expirat. Schimb cheia...")
+                
+                # Trecem la următoarea cheie
+                st.session_state.key_index = (st.session_state.key_index + 1) % len(keys)
+                
+                # Reconfigurăm global biblioteca genai
+                configure_current_key()
+                
+                # Continuăm bucla (următoarea iterație va încerca din nou cu noua cheie)
+                continue
+            else:
+                # Dacă e altă eroare (ex: conținut interzis, eroare de server), o aruncăm mai departe
+                raise e
+    
+    # Dacă am trecut prin toate cheile și tot nu merge
+    raise Exception("Toate cheile API sunt epuizate momentan. Te rog revino mai târziu.")
 
 genai.configure(api_key=api_key)
 
