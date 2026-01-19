@@ -7,14 +7,19 @@ import sqlite3
 import uuid
 import time
 import tempfile
+import ast
 
 # 1. Configurare Pagină
 st.set_page_config(page_title="Profesor Liceu AI", page_icon="🎓", layout="wide")
 
+# Ascundem elementele standard Streamlit
 st.markdown("""
 <style>
     .stChatMessage { font-size: 16px; }
     div.stButton > button:first-child { background-color: #ff4b4b; color: white; }
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -75,16 +80,25 @@ else:
 # 3. Configurare API cu ROTIRE AUTOMATĂ
 # ==========================================
 
-# 1. Încărcăm lista de chei
-if "GOOGLE_API_KEY" in st.secrets:
-    keys = st.secrets["GOOGLE_API_KEY"]
+# 1. Încărcăm lista de chei din Secrets (Plural sau Singular)
+if "GOOGLE_API_KEYS" in st.secrets:
+    keys = st.secrets["GOOGLE_API_KEYS"]
+elif "GOOGLE_API_KEY" in st.secrets:
+    keys = [st.secrets["GOOGLE_API_KEY"]]
 else:
-    # Fallback dacă testezi local fără secrets și vrei input manual (doar prima cheie)
+    # Fallback input manual
     k = st.sidebar.text_input("API Key:", type="password")
     keys = [k] if k else []
 
+# Asigurare că e listă (fix pentru formatare TOML ciudată)
+if isinstance(keys, str):
+    try:
+        keys = ast.literal_eval(keys)
+    except:
+        keys = [keys]
+
 if not keys:
-    st.info("Lipsesc cheile API.")
+    st.info("Lipsesc cheile API. Configurează secrets.toml.")
     st.stop()
 
 # 2. Gestionăm indexul cheii curente în sesiune
@@ -92,54 +106,17 @@ if "key_index" not in st.session_state:
     st.session_state.key_index = 0
 
 def configure_current_key():
+    # Resetăm indexul dacă iese din limite
+    if st.session_state.key_index >= len(keys):
+        st.session_state.key_index = 0
+        
     current_key = keys[st.session_state.key_index]
     genai.configure(api_key=current_key)
 
-# Configurăm inițial cu prima cheie (sau cea la care am rămas)
+# Configurăm inițial
 configure_current_key()
 
-# Definim Modelul (Aici pui System Instruction-ul tău mare)
-model = genai.GenerativeModel("models/gemini-2.5-flash", 
-    system_instruction="... (AICI PUI PROMPTUL TĂU MARE) ..."
-)
-
-# --- FUNCȚIE MAGICĂ PENTRU RETRY ---
-def send_message_with_rotation(chat_session, payload):
-    """
-    Această funcție încearcă să trimită mesajul.
-    Dacă eșuează din cauza limitei, schimbă cheia și încearcă din nou.
-    """
-    max_retries = len(keys) # Încercăm maxim o dată pe fiecare cheie
-    
-    for attempt in range(max_retries):
-        try:
-            # Încercăm să generăm răspunsul
-            response = chat_session.send_message(payload)
-            return response
-            
-        except Exception as e:
-            error_msg = str(e)
-            # Verificăm dacă eroarea este de cotă (429) sau resursă epuizată
-            if "429" in error_msg or "ResourceExhausted" in error_msg or "Quota" in error_msg:
-                print(f"⚠️ Cheia {st.session_state.key_index} a expirat. Schimb cheia...")
-                
-                # Trecem la următoarea cheie
-                st.session_state.key_index = (st.session_state.key_index + 1) % len(keys)
-                
-                # Reconfigurăm global biblioteca genai
-                configure_current_key()
-                
-                # Continuăm bucla (următoarea iterație va încerca din nou cu noua cheie)
-                continue
-            else:
-                # Dacă e altă eroare (ex: conținut interzis, eroare de server), o aruncăm mai departe
-                raise e
-    
-    # Dacă am trecut prin toate cheile și tot nu merge
-    raise Exception("Toate cheile API sunt epuizate momentan. Te rog revino mai târziu.")
-
-genai.configure(api_key=api_key)
-
+# Definim Modelul (Gemini 2.5 Flash)
 model = genai.GenerativeModel("models/gemini-2.5-flash", 
     system_instruction="""
     ROL: Ești un profesor de liceu din România, universal (Mate, Fizică, Chimie, Literatură), bărbat, cu experiență în pregătirea pentru BAC.
@@ -149,50 +126,68 @@ model = genai.GenerativeModel("models/gemini-2.5-flash",
        - Corect: "Sunt sigur", "Sunt pregătit", "Am fost atent", "Sunt bucuros".
        - GREȘIT: "Sunt sigură", "Sunt pregătită".
     2. Te prezinți ca "Domnul Profesor" sau "Profesorul tău virtual".
-          TON ȘI ADRESARE (CRITIC):
+    
+    TON ȘI ADRESARE (CRITIC):
     3. Vorbește DIRECT, la persoana I singular.
        - CORECT: "Salut, sunt aici să te ajut." / "Te ascult." / "Sunt pregătit."
        - GREȘIT: "Domnul profesor este aici." / "Profesorul te va ajuta."
     4. Fii cald, natural, apropiat și scurt. Evită introducerile pompoase.
-    5. Folosește "Salut" sau "Te salut" în loc de formule foarte oficiale, dar păstrează respectul.
+    5. Folosește "Salut" sau "Te salut" în loc de formule foarte oficiale.
         
-        REGULĂ STRICTĂ: Predă exact ca la școală (nivel Gimnaziu/Liceu). 
-        NU confunda elevul cu detalii despre "aproximări" sau "lumea reală" (frecare, erori) decât dacă problema o cere specific.
+    REGULĂ STRICTĂ: Predă exact ca la școală (nivel Gimnaziu/Liceu). 
+    NU confunda elevul cu detalii despre "aproximări" sau "lumea reală" (frecare, erori) decât dacă problema o cere specific.
 
-        GHID DE COMPORTAMENT:
+    GHID DE COMPORTAMENT:
+    1. MATEMATICĂ:
+       - Lucrează cu valori exacte ($\sqrt{2}$, $\pi$).
+       - Explică logica din spate, nu doar calculul.
+       - Folosește LaTeX ($...$) pentru toate formulele.
 
-        1. MATEMATICĂ:
-           - Lucrează cu valori exacte. (ex: $\sqrt{2}$ rămâne $\sqrt{2}$, nu 1.41).
-           - Explică logica din spate, nu doar calculul.
-           - Nu menționa că $\pi$ e infinit; folosește valorile standard.
-           - Folosește LaTeX ($...$) pentru toate formulele.
+    2. FIZICĂ/CHIMIE:
+       - Presupune automat "condiții ideale".
+       - Tratează problema exact așa cum apare în culegere.
 
-        2. FIZICĂ/CHIMIE:
-           - Presupune automat "condiții ideale" (fără frecare cu aerul, sisteme izolate).
-           - Tratează problema exact așa cum apare în culegere.
-           - Nu confunda elevul cu detalii de nivel universitar.
+    3. LIMBA ȘI LITERATURA ROMÂNĂ (CRITIC):
+       - Respectă STRICT programa școlară de BAC și criticii canonici.
+       - Ion Creangă (Harap-Alb) = REALISM (prin oralitate), nu romantism.
+       - Structurează răspunsurile ca un eseu de BAC (Ipoteză -> Argumente -> Concluzie).
 
-        3. LIMBA ȘI LITERATURA ROMÂNĂ (CRITIC):
-           - Respectă STRICT programa școlară de BAC din România și canoanele criticii (G. Călinescu, E. Lovinescu, T. Vianu).
-           - ATENȚIE MAJORA: Ion Creangă (Harap-Alb) este Basm Cult, dar specificul lui este REALISMUL (umanizarea fantasticului, oralitatea), nu romantismul.
-           - La poezie: Încadrează corect (Romantism - Eminescu, Modernism - Blaga/Arghezi, Simbolism - Bacovia).
-           - Structurează răspunsurile ca un eseu de BAC (Ipoteză -> Argumente (pe text) -> Concluzie).
+    4. MATERIALE UPLOADATE:
+       - Analizează orice imagine/PDF înainte de a răspunde.
+    """
+)
 
-        4. STIL DE PREDARE:
-           - Explică simplu, cald și prietenos. Evită "limbajul de lemn".
-           - Folosește analogii pentru concepte grele (ex: "Curentul e ca debitul apei").
-           - La teorie: Definiție -> Exemplu Concret -> Aplicație.
-           - La probleme: Explică pașii logici ("Facem asta pentru că..."), nu da doar calculul.
-
-        5. MATERIALE UPLOADATE (Cărți/PDF):
-           - Dacă primești o carte, păstrează sensul original în rezumate/traduceri.
-           - Dacă elevul încarcă o poză sau un PDF, analizează tot conținutul înainte de a răspunde.
-           - Păstrează sensul original al textelor din manuale.
-        """
-    )
+# --- FUNCȚIE MAGICĂ PENTRU RETRY ---
+def send_message_with_rotation(chat_session, payload):
+    """
+    Încearcă să trimită mesajul. Dacă eșuează (limită atinsă), schimbă cheia și reîncearcă.
+    """
+    max_retries = len(keys) 
+    
+    for attempt in range(max_retries):
+        try:
+            response = chat_session.send_message(payload)
+            return response
+            
+        except Exception as e:
+            error_msg = str(e)
+            # Verificăm erorile de cotă
+            if "429" in error_msg or "ResourceExhausted" in error_msg or "Quota" in error_msg:
+                st.toast(f"⚠️ Schimb motorul AI... (Cheia {st.session_state.key_index + 1} epuizată)", icon="🔄")
+                
+                # Trecem la următoarea cheie
+                st.session_state.key_index = (st.session_state.key_index + 1) % len(keys)
+                
+                # Reconfigurăm
+                configure_current_key()
+                continue
+            else:
+                raise e
+    
+    raise Exception("Toate serverele sunt ocupate momentan. Te rog revino mai târziu.")
 
 # ==========================================
-# 4. Sidebar & Upload (Codul Tău Integrat)
+# 4. Sidebar & Upload
 # ==========================================
 st.title("🎓 Profesor Liceu")
 
@@ -206,44 +201,33 @@ with st.sidebar:
     enable_audio = st.checkbox("🔊 Voce", value=False)
     st.divider()
 
-    # --- CODUL TĂU NOU AICI ---
     st.header("📁 Materiale")
     uploaded_file = st.file_uploader("Încarcă Poză sau PDF", type=["jpg", "jpeg", "png", "pdf"])
 
-    media_content = None # Variabila care va fi trimisă la AI
+    media_content = None 
     
     if uploaded_file:
         file_type = uploaded_file.type
         
         if "image" in file_type:
-            # Procesare Imagine
             media_content = Image.open(uploaded_file)
             st.image(media_content, caption="Imagine atașată", use_container_width=True)
             
         elif "pdf" in file_type:
-            # Procesare PDF cu File API
             st.info("📄 PDF Detectat. Se pregătește...")
-            
             try:
-                # 1. Salvăm temporar
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                     tmp.write(uploaded_file.getvalue())
                     tmp_path = tmp.name
                 
-                # 2. Upload către Google (doar dacă nu l-am încărcat deja în această sesiune pentru a economisi timp)
-                # Notă: Într-o aplicație simplă, re-upload-ul e ok. 
-                # Pentru optimizare, am putea folosi session_state, dar File API e rapid pe Flash.
                 with st.spinner("📚 Se trimite cartea la AI..."):
                     uploaded_pdf = genai.upload_file(tmp_path, mime_type="application/pdf")
-                    
-                    # Așteptăm ca fișierul să fie procesat (Active)
                     while uploaded_pdf.state.name == "PROCESSING":
                         time.sleep(1)
                         uploaded_pdf = genai.get_file(uploaded_pdf.name)
                         
                     media_content = uploaded_pdf
                     st.success(f"✅ Gata! AI-ul a citit: {uploaded_file.name}")
-                    
             except Exception as e:
                 st.error(f"Eroare upload PDF: {e}")
 
@@ -264,7 +248,7 @@ if user_input := st.chat_input("Scrie aici..."):
     st.session_state.messages.append({"role": "user", "content": user_input})
     save_message_to_db(st.session_state.session_id, "user", user_input)
 
-    # Construim lista de mesaje pentru AI
+    # Construim istoricul pentru AI
     history_obj = []
     for msg in st.session_state.messages[:-1]:
         role_gemini = "model" if msg["role"] == "assistant" else "user"
@@ -272,22 +256,18 @@ if user_input := st.chat_input("Scrie aici..."):
 
     chat_session = model.start_chat(history=history_obj)
 
-    # PREGĂTIM PAYLOAD-ul (Mesaj + Fișier dacă există)
+    # Payload
     final_payload = []
-    
-    # Adăugăm fișierul (PDF sau Imagine) dacă a fost încărcat acum
     if media_content:
-        # Instrucțiune pentru AI despre fișier
         final_payload.append("Te rog să analizezi acest document/imagine atașat:")
         final_payload.append(media_content)
-    
-    # Adăugăm întrebarea elevului
     final_payload.append(user_input)
 
     with st.chat_message("assistant"):
         with st.spinner("Profesorul analizează..."):
             try:
-                response = chat_session.send_message(final_payload)
+                # AICI ERA GREȘEALA -> ACUM FOLOSIM FUNCȚIA DE RETRY
+                response = send_message_with_rotation(chat_session, final_payload)
                 text_response = response.text
                 
                 st.markdown(text_response)
