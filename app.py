@@ -8,22 +8,36 @@ import uuid
 import time
 import tempfile
 import ast
+import re
 
-# 1. Configurare Pagină
-st.set_page_config(page_title="Profesor Liceu AI", page_icon="🎓", layout="wide")
+# ==========================================
+# 1. CONFIGURARE PAGINĂ & CSS
+# ==========================================
+st.set_page_config(page_title="Profesor Liceu AI", page_icon="🎓", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
     .stChatMessage { font-size: 16px; }
     div.stButton > button:first-child { background-color: #ff4b4b; color: white; }
     
-    /* Am șters liniile care ascundeau header-ul pentru a putea folosi meniul */
+    /* Ascundem footer-ul standard Streamlit, dar lăsăm meniul vizibil */
     footer {visibility: hidden;}
+    
+    /* Stil pentru containerul SVG (desene) */
+    .svg-container {
+        background-color: white;
+        padding: 20px;
+        border-radius: 10px;
+        border: 1px solid #ddd;
+        text-align: center;
+        margin: 10px 0;
+        overflow: auto;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. MEMORIE (Bază de date)
+# 2. SISTEM DE MEMORIE (Bază de date)
 # ==========================================
 def get_db_connection():
     return sqlite3.connect('chat_history.db', check_same_thread=False)
@@ -74,11 +88,10 @@ else:
     st.session_state.session_id = st.query_params["session_id"]
 
 # ==========================================
-# 3. ROTIRE API & CURĂȚARE CHEI
+# 3. ROTIRE API & CONFIGURARE
 # ==========================================
 
 raw_keys = None
-
 if "GOOGLE_API_KEYS" in st.secrets:
     raw_keys = st.secrets["GOOGLE_API_KEYS"]
 elif "GOOGLE_API_KEY" in st.secrets:
@@ -94,7 +107,7 @@ if raw_keys:
             raw_keys = ast.literal_eval(raw_keys)
         except:
             raw_keys = [raw_keys]
-            
+    
     if isinstance(raw_keys, list):
         for k in raw_keys:
             if k and isinstance(k, str):
@@ -103,13 +116,13 @@ if raw_keys:
                     keys.append(clean_k)
 
 if not keys:
-    st.error("❌ Nu am găsit nicio cheie API validă. Verifică secrets.toml.")
+    st.error("❌ Nu am găsit nicio cheie API validă.")
     st.stop()
 
 if "key_index" not in st.session_state:
     st.session_state.key_index = 0
 
-# --- PROMPT-UL SISTEMULUI ---
+# --- PROMPT-UL SISTEMULUI (Inclusiv reguli SVG și Salut) ---
 SYSTEM_PROMPT = """
 ROL: Ești un profesor de liceu din România, universal (Mate, Fizică, Chimie, Literatură si Gramatica Romana, Franceza, Engleza, Geografie, Istorie, Informatica), bărbat, cu experiență în pregătirea pentru BAC.
     
@@ -182,9 +195,9 @@ safety_settings = [
     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
 ]
 
-# --- FUNCȚIE AVANSATĂ: GENERATOR CU ROTIRE ---
+# --- FUNCȚIE GENERATOR CU ROTIRE ---
 def run_chat_with_rotation(history_obj, payload):
-    max_retries = len(keys) * 2 # Încercăm de două ori pe fiecare cheie dacă e nevoie
+    max_retries = len(keys) * 2
     
     for attempt in range(max_retries):
         try:
@@ -210,33 +223,29 @@ def run_chat_with_rotation(history_obj, payload):
                         yield text_part
                 except ValueError:
                     continue
-            
             return 
 
         except Exception as e:
             error_msg = str(e)
             
-            # Gestionăm erorile 503 (Overloaded) și 429 (Quota)
             if "503" in error_msg or "overloaded" in error_msg:
-                st.toast("🐢 Serverele Google sunt aglomerate. Mai încerc o dată...", icon="⏳")
-                time.sleep(2) # Așteptăm 2 secunde să își revină serverul
-                # Nu schimbăm neapărat cheia la 503, dar reîncercăm
+                st.toast("🐢 Serverele Google sunt aglomerate. Reîncerc...", icon="⏳")
+                time.sleep(2)
                 continue
                 
             elif "400" in error_msg or "429" in error_msg or "ResourceExhausted" in error_msg or "Quota" in error_msg or "API key not valid" in error_msg:
                 st.toast(f"⚠️ Schimb motorul AI (Cheia {st.session_state.key_index + 1})...", icon="🔄")
                 st.session_state.key_index = (st.session_state.key_index + 1) % len(keys)
                 continue
-                
             else:
                 raise e
     
-    raise Exception("Toate serverele sunt momentan indisponibile. Te rog încearcă peste 1 minut.")
+    raise Exception("Serviciul este momentan indisponibil. Încearcă mai târziu.")
 
 # ==========================================
-# 4. INTERFAȚĂ
+# 4. SIDEBAR & UPLOAD
 # ==========================================
-st.title("🎓 Profesor Liceu")
+st.title("🎓 Profesor Liceu AI")
 
 with st.sidebar:
     st.header("⚙️ Opțiuni")
@@ -278,17 +287,41 @@ with st.sidebar:
                 st.error(f"Eroare upload PDF: {e}")
 
 # ==========================================
-# 5. CHAT
+# 5. CHAT LOGIC (CU RANDAREE SVG)
 # ==========================================
 
+# Funcție ajutătoare pentru afișarea mesajelor cu SVG randat
+def render_message_with_svg(content):
+    if "[[DESEN_SVG]]" in content and "[[/DESEN_SVG]]" in content:
+        parts = content.split("[[DESEN_SVG]]")
+        before_svg = parts[0]
+        remaining = parts[1]
+        
+        svg_parts = remaining.split("[[/DESEN_SVG]]")
+        svg_code = svg_parts[0]
+        after_svg = svg_parts[1] if len(svg_parts) > 1 else ""
+        
+        st.markdown(before_svg)
+        st.markdown(f'<div class="svg-container">{svg_code}</div>', unsafe_allow_html=True)
+        st.markdown(after_svg)
+    else:
+        st.markdown(content)
+
+# Încărcare istoric
 if "messages" not in st.session_state or not st.session_state.messages:
     st.session_state.messages = load_history_from_db(st.session_state.session_id)
 
+# Afișare istoric
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+        # Folosim funcția custom pentru a randa SVG-urile vechi
+        if msg["role"] == "assistant":
+            render_message_with_svg(msg["content"])
+        else:
+            st.markdown(msg["content"])
 
-if user_input := st.chat_input("Scrie aici..."):
+# Input utilizator
+if user_input := st.chat_input("Întreabă profesorul..."):
     
     st.chat_message("user").write(user_input)
     st.session_state.messages.append({"role": "user", "content": user_input})
@@ -314,21 +347,35 @@ if user_input := st.chat_input("Scrie aici..."):
             
             for text_chunk in stream_generator:
                 full_response += text_chunk
-                message_placeholder.markdown(full_response + "▌")
-            
-            message_placeholder.markdown(full_response)
-            
+                
+                # În timp ce scrie, ascundem parțial tag-urile ca să nu arate urât
+                if "[[DESEN_SVG]]" in full_response:
+                     preview_text = full_response.replace("[[DESEN_SVG]]", "*Generez diagrama...*").replace("[[/DESEN_SVG]]", "")
+                     message_placeholder.markdown(preview_text + "▌")
+                else:
+                     message_placeholder.markdown(full_response + "▌")
+
+            # --- LA FINAL: RANDAREE CORECTĂ ---
+            message_placeholder.empty() # Ștergem placeholder-ul de streaming
+            render_message_with_svg(full_response) # Afișăm varianta finală cu SVG randat
+
+            # Salvare
             st.session_state.messages.append({"role": "assistant", "content": full_response})
             save_message_to_db(st.session_state.session_id, "assistant", full_response)
 
+            # Audio (fără codul SVG)
             if enable_audio:
                 with st.spinner("Generez vocea..."):
-                    clean_text = full_response.replace("*", "").replace("$", "")[:500]
-                    if clean_text:
+                    # Eliminăm tot blocul SVG pentru audio
+                    text_for_audio = re.sub(r'\[\[DESEN_SVG\]\].*?\[\[/DESEN_SVG\]\]', ' (Am desenat schema solicitată) ', full_response, flags=re.DOTALL)
+                    
+                    clean_text = text_for_audio.replace("*", "").replace("$", "").replace("#", "")[:600]
+                    
+                    if clean_text.strip():
                         sound_file = BytesIO()
                         tts = gTTS(text=clean_text, lang='ro')
                         tts.write_to_fp(sound_file)
                         st.audio(sound_file, format='audio/mp3')
 
         except Exception as e:
-            st.error(f"A apărut o eroare neașteptată: {e}")
+            st.error(f"A apărut o eroare: {e}")
