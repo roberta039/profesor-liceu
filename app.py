@@ -6,7 +6,7 @@ from io import BytesIO
 import sqlite3
 import uuid
 import time
-import tempfile # <--- Necesar pentru PDF-uri
+import tempfile
 
 # 1. Configurare Pagină
 st.set_page_config(page_title="Profesor Liceu AI", page_icon="🎓", layout="wide")
