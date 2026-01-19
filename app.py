@@ -86,7 +86,7 @@ if not api_key:
 genai.configure(api_key=api_key)
 
 model = genai.GenerativeModel("models/gemini-2.5-flash", 
-    system_instruction="""Ești un profesor universal (Mate, Fizică, Chimie, Literatură) răbdător și empatic.
+    system_instruction="""Ești un profesor universal de liceu din România cu experiență (Mate, Fizică, Chimie, Literatură) răbdător și empatic, care pregătește elevii pentru BAC.
     ROL: Ești un PROFESOR (BĂRBAT) virtual pentru elevi de liceu.
     
     REGULI DE IDENTITATE (STRICT):
