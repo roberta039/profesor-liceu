@@ -19,11 +19,8 @@ st.markdown("""
 <style>
     .stChatMessage { font-size: 16px; }
     div.stButton > button:first-child { background-color: #ff4b4b; color: white; }
-    
-    /* Ascundem footer-ul standard Streamlit */
     footer {visibility: hidden;}
     
-    /* Stil pentru containerul SVG (desene) */
     .svg-container {
         background-color: white;
         padding: 20px;
@@ -32,7 +29,6 @@ st.markdown("""
         text-align: center;
         margin: 10px 0;
         overflow: auto;
-        max-width: 100%;
         box-shadow: 0 2px 5px rgba(0,0,0,0.1);
     }
 </style>
@@ -109,7 +105,6 @@ if raw_keys:
             raw_keys = ast.literal_eval(raw_keys)
         except:
             raw_keys = [raw_keys]
-    
     if isinstance(raw_keys, list):
         for k in raw_keys:
             if k and isinstance(k, str):
@@ -124,7 +119,7 @@ if not keys:
 if "key_index" not in st.session_state:
     st.session_state.key_index = 0
 
-# --- PROMPT-UL SISTEMULUI (FINAL) ---
+# --- PROMPT-UL SISTEMULUI ---
 SYSTEM_PROMPT = """
 ROL: Ești un profesor de liceu din România, universal (Mate, Fizică, Chimie, Literatură si Gramatica Romana, Franceza, Engleza, Geografie, Istorie, Informatica), bărbat, cu experiență în pregătirea pentru BAC.
     
@@ -173,28 +168,29 @@ ROL: Ești un profesor de liceu din România, universal (Mate, Fizică, Chimie, 
            - La teorie: Definiție -> Exemplu Concret -> Aplicație.
            - La probleme: Explică pașii logici ("Facem asta pentru că..."), nu da doar calculul.
 
-    5. ISTORIE / GEOGRAFIE:
-   - Folosește denumirile în limba română (ex: "Londra" nu "London").
-   - Fii obiectiv și cronologic.
-
+    5. MATERIALE UPLOADATE (Cărți/PDF):
+           - Dacă primești o carte, păstrează sensul original în rezumate/traduceri.
+           - Dacă elevul încarcă o poză sau un PDF, analizează tot conținutul înainte de a răspunde.
+           - Păstrează sensul original al textelor din manuale.
+           
     6. FUNCȚIE SPECIALĂ - DESENARE (SVG):
-       Dacă elevul cere un desen, o diagramă, o figură geometrică sau o hartă:
-       a. Ești OBLIGAT să generezi cod SVG valid. Nu face liste de text!
-       b. Codul trebuie încadrat STRICT între tag-uri:
-          [[DESEN_SVG]]
-          <svg viewBox="0 0 600 400" xmlns="http://www.w3.org/2000/svg">
-             <rect width="100%" height="100%" fill="white"/>
-             <!-- Codul tău aici -->
-          </svg>
-          [[/DESEN_SVG]]
-       c. HĂRȚI: Nu desena pătrate! Folosește <path> cu multe puncte pentru contururi. Râurile sunt linii albastre.
+        Dacă elevul cere un desen, o diagramă sau o hartă:
+        1. Ești OBLIGAT să generezi cod SVG valid.
+        2. Codul trebuie încadrat STRICT între tag-uri:
+           [[DESEN_SVG]]
+           <svg viewBox="0 0 800 600" xmlns="http://www.w3.org/2000/svg">
+              <!-- Codul tău aici -->
+           </svg>
+           [[/DESEN_SVG]]
+        3. IMPORTANT: Nu uita tag-ul de deschidere <svg> și cel de închidere </svg>!
 
-    7. MATERIALE UPLOADATE:
-   - Analizează complet orice PDF sau imagine înainte de a răspunde.
-   - Păstrează sensul original al textelor.
+        REGULI HĂRȚI (GEOGRAFIE):
+        - Nu desena pătrate. Folosește <path> pentru contururi.
+        - Râurile = linii albastre.
+        - Adaugă etichete text (<text>).
 """
 
-# Configurare Filtre de Siguranță
+# Configurare Filtre
 safety_settings = [
     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
     {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -205,49 +201,33 @@ safety_settings = [
 # --- FUNCȚIE GENERATOR CU ROTIRE ---
 def run_chat_with_rotation(history_obj, payload):
     max_retries = len(keys) * 2
-    
     for attempt in range(max_retries):
         try:
             if st.session_state.key_index >= len(keys):
                  st.session_state.key_index = 0
-            
             current_key = keys[st.session_state.key_index]
             genai.configure(api_key=current_key)
-            
-            model = genai.GenerativeModel(
-                "models/gemini-2.5-flash", 
-                system_instruction=SYSTEM_PROMPT,
-                safety_settings=safety_settings
-            )
+            model = genai.GenerativeModel("models/gemini-2.5-flash", system_instruction=SYSTEM_PROMPT, safety_settings=safety_settings)
             chat = model.start_chat(history=history_obj)
-            
             response_stream = chat.send_message(payload, stream=True)
-            
             for chunk in response_stream:
                 try:
-                    text_part = chunk.text
-                    if text_part:
-                        yield text_part
-                except ValueError:
-                    continue
+                    if chunk.text: yield chunk.text
+                except ValueError: continue
             return 
-
         except Exception as e:
             error_msg = str(e)
-            
             if "503" in error_msg or "overloaded" in error_msg:
-                st.toast("🐢 Serverele Google sunt aglomerate. Reîncerc...", icon="⏳")
+                st.toast("🐢 Reîncerc...", icon="⏳")
                 time.sleep(2)
                 continue
-                
-            elif "400" in error_msg or "429" in error_msg or "ResourceExhausted" in error_msg or "Quota" in error_msg or "API key not valid" in error_msg:
-                st.toast(f"⚠️ Schimb motorul AI (Cheia {st.session_state.key_index + 1})...", icon="🔄")
+            elif "400" in error_msg or "429" in error_msg or "Quota" in error_msg or "API key not valid" in error_msg:
+                st.toast(f"⚠️ Schimb cheia {st.session_state.key_index + 1}...", icon="🔄")
                 st.session_state.key_index = (st.session_state.key_index + 1) % len(keys)
                 continue
             else:
                 raise e
-    
-    raise Exception("Serviciul este momentan indisponibil. Încearcă mai târziu.")
+    raise Exception("Serviciul este indisponibil momentan.")
 
 # ==========================================
 # 4. SIDEBAR & UPLOAD
@@ -260,19 +240,14 @@ with st.sidebar:
         clear_history_db(st.session_state.session_id)
         st.session_state.messages = []
         st.rerun()
-    
     enable_audio = st.checkbox("🔊 Voce", value=False)
     st.divider()
-
     st.header("📁 Materiale")
     uploaded_file = st.file_uploader("Încarcă Poză sau PDF", type=["jpg", "jpeg", "png", "pdf"])
-
     media_content = None 
-    
     if uploaded_file:
         genai.configure(api_key=keys[st.session_state.key_index])
         file_type = uploaded_file.type
-
         if "image" in file_type:
             media_content = Image.open(uploaded_file)
             st.image(media_content, caption="Imagine atașată", use_container_width=True)
@@ -282,7 +257,6 @@ with st.sidebar:
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                     tmp.write(uploaded_file.getvalue())
                     tmp_path = tmp.name
-                
                 with st.spinner("📚 Se trimite cartea la AI..."):
                     uploaded_pdf = genai.upload_file(tmp_path, mime_type="application/pdf")
                     while uploaded_pdf.state.name == "PROCESSING":
@@ -294,36 +268,41 @@ with st.sidebar:
                 st.error(f"Eroare upload PDF: {e}")
 
 # ==========================================
-# 5. CHAT LOGIC (CU RANDAREE SVG INTELIGENTĂ)
+# 5. CHAT LOGIC (CU AUTO-REPAIR SVG)
 # ==========================================
 
-# Funcție robustă pentru afișarea mesajelor cu SVG
 def render_message_with_svg(content):
-    # Căutăm codul SVG direct, indiferent de tag-urile [[DESEN_SVG]]
+    # CAZ 1: Desen Valid (are tag-urile svg)
     if "<svg" in content and "</svg>" in content:
         try:
-            # Găsim indecșii
             start_idx = content.find("<svg")
             end_idx = content.find("</svg>") + 6
-            
-            # Textul dinainte și de după
             before_svg = content[:start_idx].replace("[[DESEN_SVG]]", "")
             svg_code = content[start_idx:end_idx]
             after_svg = content[end_idx:].replace("[[/DESEN_SVG]]", "")
             
-            # 1. Text introductiv
-            if before_svg.strip():
-                st.markdown(before_svg)
-            
-            # 2. Desenul
+            if before_svg.strip(): st.markdown(before_svg)
             st.markdown(f'<div class="svg-container">{svg_code}</div>', unsafe_allow_html=True)
-            
-            # 3. Text final
-            if after_svg.strip():
-                st.markdown(after_svg)
+            if after_svg.strip(): st.markdown(after_svg)
         except Exception as e:
-            st.error(f"Eroare la procesarea desenului: {e}")
-            st.markdown(content) # Fallback
+            st.markdown(content)
+            
+    # CAZ 2: AI-ul a uitat tag-ul <svg>, dar a dat conținutul (path/rect)
+    # Asta repară problema ta specifică!
+    elif ("<path" in content or "<rect" in content) and ("stroke=" in content or "fill=" in content) and "<svg" not in content:
+        try:
+            # Curățăm tag-urile [[DESEN_SVG]] dacă există, dar sunt inutile
+            clean_content = content.replace("[[DESEN_SVG]]", "").replace("[[/DESEN_SVG]]", "")
+            
+            # Adăugăm noi "rama" <svg> lipsă
+            # Folosim un viewBox generos (0 0 800 600) care acoperă majoritatea desenelor
+            wrapped_svg = f'<svg viewBox="0 0 800 600" xmlns="http://www.w3.org/2000/svg" style="background-color: white;">{clean_content}</svg>'
+            
+            st.markdown(f'<div class="svg-container">{wrapped_svg}</div>', unsafe_allow_html=True)
+        except Exception as e:
+            st.markdown(content)
+            
+    # CAZ 3: Text normal
     else:
         st.markdown(content)
 
@@ -331,7 +310,6 @@ def render_message_with_svg(content):
 if "messages" not in st.session_state or not st.session_state.messages:
     st.session_state.messages = load_history_from_db(st.session_state.session_id)
 
-# Afișare istoric
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         if msg["role"] == "assistant":
@@ -339,9 +317,7 @@ for msg in st.session_state.messages:
         else:
             st.markdown(msg["content"])
 
-# Input utilizator
 if user_input := st.chat_input("Întreabă profesorul..."):
-    
     st.chat_message("user").write(user_input)
     st.session_state.messages.append({"role": "user", "content": user_input})
     save_message_to_db(st.session_state.session_id, "user", user_input)
@@ -353,48 +329,38 @@ if user_input := st.chat_input("Întreabă profesorul..."):
 
     final_payload = []
     if media_content:
-        final_payload.append("Te rog să analizezi acest document/imagine atașat:")
+        final_payload.append("Analizează materialul atașat:")
         final_payload.append(media_content)
     final_payload.append(user_input)
 
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
         full_response = ""
-        
         try:
             stream_generator = run_chat_with_rotation(history_obj, final_payload)
-            
             for text_chunk in stream_generator:
                 full_response += text_chunk
                 
-                # Preview inteligent: dacă detectăm începutul unui desen
-                if "<svg" in full_response and "</svg>" not in full_response:
-                     parts = full_response.split("<svg")
-                     preview = parts[0] + "\n\n*🎨 Domnul Profesor desenează la tablă...*\n\n"
-                     message_placeholder.markdown(preview + "▌")
+                # Logică de preview
+                if "<svg" in full_response or ("<path" in full_response and "stroke=" in full_response):
+                     message_placeholder.markdown(full_response.split("<path")[0] + "\n\n*🎨 Domnul Profesor desenează...*\n\n▌")
                 else:
                      message_placeholder.markdown(full_response + "▌")
 
-            # Finalizare
             message_placeholder.empty()
             render_message_with_svg(full_response)
-
+            
             st.session_state.messages.append({"role": "assistant", "content": full_response})
             save_message_to_db(st.session_state.session_id, "assistant", full_response)
 
             if enable_audio:
                 with st.spinner("Generez vocea..."):
-                    # Eliminăm desenul din audio cu Regex
-                    text_for_audio = re.sub(r'<svg.*?</svg>', ' (Am desenat schema pe tablă) ', full_response, flags=re.DOTALL)
+                    text_for_audio = re.sub(r'<.*?>', '', full_response) # Scoate toate tag-urile HTML/SVG
                     text_for_audio = text_for_audio.replace("[[DESEN_SVG]]", "").replace("[[/DESEN_SVG]]", "")
-                    
-                    clean_text = text_for_audio.replace("*", "").replace("$", "").replace("#", "")[:600]
-                    
-                    if clean_text.strip():
+                    if text_for_audio.strip():
                         sound_file = BytesIO()
-                        tts = gTTS(text=clean_text, lang='ro')
+                        tts = gTTS(text=text_for_audio[:500], lang='ro')
                         tts.write_to_fp(sound_file)
                         st.audio(sound_file, format='audio/mp3')
-
         except Exception as e:
-            st.error(f"A apărut o eroare: {e}")
+            st.error(f"Eroare: {e}")
