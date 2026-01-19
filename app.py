@@ -74,10 +74,9 @@ else:
     st.session_state.session_id = st.query_params["session_id"]
 
 # ==========================================
-# 3. ROTIRE API & CURĂȚARE CHEI (FIX ERROR 400)
+# 3. ROTIRE API & CURĂȚARE CHEI
 # ==========================================
 
-# Încărcăm raw keys
 raw_keys = None
 
 if "GOOGLE_API_KEYS" in st.secrets:
@@ -88,21 +87,17 @@ else:
     k = st.sidebar.text_input("API Key (Manual):", type="password")
     raw_keys = [k] if k else []
 
-# Procesare și Curățare Robustă
 keys = []
 if raw_keys:
-    # Dacă e string simplu care arată a listă, îl convertim
     if isinstance(raw_keys, str):
         try:
             raw_keys = ast.literal_eval(raw_keys)
         except:
             raw_keys = [raw_keys]
             
-    # Curățăm fiecare cheie de spații și ghilimele
     if isinstance(raw_keys, list):
         for k in raw_keys:
             if k and isinstance(k, str):
-                # .strip() scoate spațiile, .strip('"') scoate ghilimelele duble, .strip("'") pe cele simple
                 clean_k = k.strip().strip('"').strip("'")
                 if clean_k:
                     keys.append(clean_k)
@@ -167,49 +162,56 @@ ROL: Ești un profesor de liceu din România, universal (Mate, Fizică, Chimie, 
            - Păstrează sensul original al textelor din manuale.
     """
 
+# Configurare Filtre de Siguranță (Să nu blocheze teme de biologie/istorie)
+safety_settings = [
+    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+]
+
 # --- FUNCȚIE AVANSATĂ: GENERATOR CU ROTIRE ---
 def run_chat_with_rotation(history_obj, payload):
-    """
-    Gestionează rotirea cheilor și recrearea modelului.
-    """
     max_retries = len(keys)
     
     for attempt in range(max_retries):
         try:
-            # 1. Selectăm cheia curentă
             if st.session_state.key_index >= len(keys):
                  st.session_state.key_index = 0
             
             current_key = keys[st.session_state.key_index]
             genai.configure(api_key=current_key)
             
-            # 2. CREĂM MODELUL ȘI SESIUNEA (CRITIC: În interiorul buclei)
-            # Folosim gemini-2.5-flash pentru că e rapid și stabil
-            model = genai.GenerativeModel("models/gemini-2.5-flash", system_instruction=SYSTEM_PROMPT)
+            # Creăm modelul cu setările de siguranță
+            model = genai.GenerativeModel(
+                "models/gemini-2.5-flash", 
+                system_instruction=SYSTEM_PROMPT,
+                safety_settings=safety_settings
+            )
             chat = model.start_chat(history=history_obj)
             
-            # 3. Trimitem mesajul
             response_stream = chat.send_message(payload, stream=True)
             
-            # 4. Returnăm textul bucată cu bucată
+            # --- FIX PENTRU EROAREA DE STREAMING ---
             for chunk in response_stream:
-                if chunk.text:
-                    yield chunk.text
+                # Verificăm în siguranță dacă există text
+                try:
+                    text_part = chunk.text
+                    if text_part:
+                        yield text_part
+                except ValueError:
+                    # Dacă chunk-ul e gol (stop signal), îl ignorăm și continuăm
+                    continue
             
-            # Dacă am terminat cu succes, ieșim
             return 
 
         except Exception as e:
             error_msg = str(e)
-            # Prindem erori de invaliditate (400) sau epuizare (429)
             if "400" in error_msg or "429" in error_msg or "ResourceExhausted" in error_msg or "Quota" in error_msg or "API key not valid" in error_msg:
                 st.toast(f"⚠️ Cheia {st.session_state.key_index + 1} are probleme. Trec la următoarea...", icon="🔄")
-                
-                # Schimbăm indexul
                 st.session_state.key_index = (st.session_state.key_index + 1) % len(keys)
                 continue
             else:
-                # Alte erori (ex: imagine prea mare)
                 raise e
     
     raise Exception("Toate cheile API au eșuat. Verifică lista din secrets.")
@@ -235,7 +237,6 @@ with st.sidebar:
     media_content = None 
     
     if uploaded_file:
-        # Configuram cheia curentă pt upload ca să nu crape File API
         genai.configure(api_key=keys[st.session_state.key_index])
         file_type = uploaded_file.type
 
@@ -276,13 +277,11 @@ if user_input := st.chat_input("Scrie aici..."):
     st.session_state.messages.append({"role": "user", "content": user_input})
     save_message_to_db(st.session_state.session_id, "user", user_input)
 
-    # Pregătim istoricul
     history_obj = []
     for msg in st.session_state.messages[:-1]:
         role_gemini = "model" if msg["role"] == "assistant" else "user"
         history_obj.append({"role": role_gemini, "parts": [msg["content"]]})
 
-    # Pregătim payload-ul curent
     final_payload = []
     if media_content:
         final_payload.append("Te rog să analizezi acest document/imagine atașat:")
@@ -294,7 +293,6 @@ if user_input := st.chat_input("Scrie aici..."):
         full_response = ""
         
         try:
-            # APELĂM FUNCȚIA DE ROTIRE
             stream_generator = run_chat_with_rotation(history_obj, final_payload)
             
             for text_chunk in stream_generator:
@@ -303,11 +301,9 @@ if user_input := st.chat_input("Scrie aici..."):
             
             message_placeholder.markdown(full_response)
             
-            # Salvare
             st.session_state.messages.append({"role": "assistant", "content": full_response})
             save_message_to_db(st.session_state.session_id, "assistant", full_response)
 
-            # Audio
             if enable_audio:
                 with st.spinner("Generez vocea..."):
                     clean_text = full_response.replace("*", "").replace("$", "")[:500]
@@ -318,4 +314,4 @@ if user_input := st.chat_input("Scrie aici..."):
                         st.audio(sound_file, format='audio/mp3')
 
         except Exception as e:
-            st.error(f"Eroare: {e}")
+            st.error(f"A apărut o eroare neașteptată: {e}")
