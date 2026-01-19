@@ -116,6 +116,7 @@ model = genai.GenerativeModel("models/gemini-2.5-flash",
 
         5. MATERIALE UPLOADATE (Cărți/PDF):
            - Dacă primești o carte, păstrează sensul original în rezumate/traduceri.
+           - Dacă e un PDF cu teorie, fă un rezumat structurat.
         """
     )
 
