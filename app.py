@@ -115,7 +115,7 @@ model = genai.GenerativeModel("models/gemini-2.5-flash",
 # ==========================================
 # 4. Sidebar & Butoane
 # ==========================================
-st.title("🎓 Profesor Liceu - Memorie Persistentă")
+st.title("🎓 Profesor Liceu")
 
 st.sidebar.header("⚙️ Opțiuni")
 
