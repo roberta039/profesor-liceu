@@ -116,8 +116,8 @@ def configure_current_key():
 # Configurăm inițial
 configure_current_key()
 
-# Definim Modelul (Gemini 1.5 Flash este cel corect, 2.5 nu există încă)
-model = genai.GenerativeModel("models/gemini-1.5-flash", 
+# Definim Modelul (Gemini 2.5 Flash)
+model = genai.GenerativeModel("models/gemini-2.5-flash", 
     system_instruction="""
     ROL: Ești un profesor de liceu din România, universal (Mate, Fizică, Chimie, Literatură), bărbat, cu experiență în pregătirea pentru BAC.
     
