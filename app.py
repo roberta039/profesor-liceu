@@ -285,17 +285,64 @@ with st.sidebar:
                 st.error(f"Eroare upload PDF: {e}")
 
 # ==========================================
-# 5. CHAT
+# 5. CHAT LOGIC (CU RANDAREE SVG FINALĂ)
 # ==========================================
 
+# Funcție ajutătoare pentru afișarea mesajelor cu SVG randat
+def render_message_with_svg(content):
+    # Verificăm dacă există un bloc valid de SVG
+    if "[[DESEN_SVG]]" in content and "[[/DESEN_SVG]]" in content:
+        try:
+            # Spargem textul în: [Text înainte] [SVG] [Text după]
+            parts = content.split("[[DESEN_SVG]]")
+            before_svg = parts[0]
+            remaining = parts[1]
+            
+            svg_parts = remaining.split("[[/DESEN_SVG]]")
+            svg_code = svg_parts[0].strip() # Curățăm spațiile
+            after_svg = svg_parts[1] if len(svg_parts) > 1 else ""
+            
+            # 1. Afișăm textul introductiv
+            if before_svg.strip():
+                st.markdown(before_svg)
+            
+            # 2. RANDAREE SVG (fără ghilimele în plus)
+            # Ne asigurăm că svg_code începe cu <svg și se termină cu </svg>
+            if "<svg" in svg_code and "</svg>" in svg_code:
+                 # Extragem doar partea de XML valid, ignorând eventuale gunoaie
+                 start_idx = svg_code.find("<svg")
+                 end_idx = svg_code.find("</svg>") + 6
+                 clean_svg = svg_code[start_idx:end_idx]
+                 
+                 st.markdown(f'<div class="svg-container">{clean_svg}</div>', unsafe_allow_html=True)
+            else:
+                 st.error("Eroare la randarea desenului: Cod SVG invalid.")
+            
+            # 3. Afișăm textul de final
+            if after_svg.strip():
+                st.markdown(after_svg)
+                
+        except Exception as e:
+            st.error(f"Eroare la procesarea desenului: {e}")
+            st.markdown(content) # Fallback la text brut
+    else:
+        # Mesaj normal (fără desen)
+        st.markdown(content)
+
+# Încărcare istoric
 if "messages" not in st.session_state or not st.session_state.messages:
     st.session_state.messages = load_history_from_db(st.session_state.session_id)
 
+# Afișare istoric (Randăm și mesajele vechi corect)
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+        if msg["role"] == "assistant":
+            render_message_with_svg(msg["content"])
+        else:
+            st.markdown(msg["content"])
 
-if user_input := st.chat_input("Scrie aici..."):
+# Input utilizator
+if user_input := st.chat_input("Întreabă profesorul..."):
     
     st.chat_message("user").write(user_input)
     st.session_state.messages.append({"role": "user", "content": user_input})
@@ -319,23 +366,41 @@ if user_input := st.chat_input("Scrie aici..."):
         try:
             stream_generator = run_chat_with_rotation(history_obj, final_payload)
             
+            # 1. STREAMING (Afișăm text brut temporar)
             for text_chunk in stream_generator:
                 full_response += text_chunk
-                message_placeholder.markdown(full_response + "▌")
-            
-            message_placeholder.markdown(full_response)
-            
+                
+                # În timp ce se generează, dacă vedem tag-uri, le arătăm utilizatorului că "se lucrează"
+                if "[[DESEN_SVG]]" in full_response:
+                     # Ascundem codul urât în timp real
+                     preview = full_response.replace("[[DESEN_SVG]]", "\n\n*🎨 Se desenează diagrama...*\n\n").replace("[[/DESEN_SVG]]", "")
+                     # Eliminăm codul dintre tag-uri pentru preview (opțional, dar arată mai curat)
+                     preview = re.sub(r'\*🎨 Se desenează diagrama\...\*\n\n.*', '*🎨 Se desenează diagrama...*', preview, flags=re.DOTALL)
+                     message_placeholder.markdown(preview + "▌")
+                else:
+                     message_placeholder.markdown(full_response + "▌")
+
+            # 2. FINALIZARE (Ștergem brutul și punem desenul)
+            message_placeholder.empty() # Golim containerul
+            render_message_with_svg(full_response) # Afișăm varianta frumoasă
+
+            # Salvare
             st.session_state.messages.append({"role": "assistant", "content": full_response})
             save_message_to_db(st.session_state.session_id, "assistant", full_response)
 
+            # Audio (fără codul SVG)
             if enable_audio:
                 with st.spinner("Generez vocea..."):
-                    clean_text = full_response.replace("*", "").replace("$", "")[:500]
-                    if clean_text:
+                    # Eliminăm tot blocul SVG pentru audio folosind Regex
+                    text_for_audio = re.sub(r'\[\[DESEN_SVG\]\].*?\[\[/DESEN_SVG\]\]', ' (Am desenat schema pe tablă) ', full_response, flags=re.DOTALL)
+                    
+                    clean_text = text_for_audio.replace("*", "").replace("$", "").replace("#", "")[:600]
+                    
+                    if clean_text.strip():
                         sound_file = BytesIO()
                         tts = gTTS(text=clean_text, lang='ro')
                         tts.write_to_fp(sound_file)
                         st.audio(sound_file, format='audio/mp3')
 
         except Exception as e:
-            st.error(f"A apărut o eroare neașteptată: {e}")
+            st.error(f"A apărut o eroare: {e}")
