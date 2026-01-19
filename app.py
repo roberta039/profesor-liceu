@@ -12,7 +12,6 @@ import ast
 # 1. Configurare Pagină
 st.set_page_config(page_title="Profesor Liceu AI", page_icon="🎓", layout="wide")
 
-# CSS: Ascundem meniul standard Streamlit și stilizăm chat-ul
 st.markdown("""
 <style>
     .stChatMessage { font-size: 16px; }
@@ -24,13 +23,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. SISTEMUL DE MEMORIE (Bază de date)
+# 2. MEMORIE (Bază de date)
 # ==========================================
-
 def get_db_connection():
-    # check_same_thread=False e critic pentru Streamlit Cloud
-    conn = sqlite3.connect('chat_history.db', check_same_thread=False)
-    return conn
+    return sqlite3.connect('chat_history.db', check_same_thread=False)
 
 def init_db():
     conn = get_db_connection()
@@ -70,7 +66,6 @@ def clear_history_db(session_id):
 
 init_db()
 
-# Gestionare Session ID
 if "session_id" not in st.query_params:
     new_id = str(uuid.uuid4())
     st.query_params["session_id"] = new_id 
@@ -79,19 +74,18 @@ else:
     st.session_state.session_id = st.query_params["session_id"]
 
 # ==========================================
-# 3. Configurare API cu ROTIRE AUTOMATĂ
+# 3. ROTIRE API & CONFIGURARE
 # ==========================================
 
-# Încărcăm lista de chei din Secrets
-if "GOOGLE_API_KEY" in st.secrets:
-    keys = st.secrets["GOOGLE_API_KEY"]
+# Încărcăm cheile
+if "GOOGLE_API_KEYS" in st.secrets:
+    keys = st.secrets["GOOGLE_API_KEYS"]
 elif "GOOGLE_API_KEY" in st.secrets:
     keys = [st.secrets["GOOGLE_API_KEY"]]
 else:
     k = st.sidebar.text_input("API Key:", type="password")
     keys = [k] if k else []
 
-# Asigurare format Listă
 if isinstance(keys, str):
     try:
         keys = ast.literal_eval(keys)
@@ -99,25 +93,15 @@ if isinstance(keys, str):
         keys = [keys]
 
 if not keys:
-    st.warning("⚠️ Nu s-au găsit chei API. Configurează secrets.toml.")
+    st.warning("⚠️ Nu s-au găsit chei API.")
     st.stop()
 
-# Indexul cheii curente
 if "key_index" not in st.session_state:
     st.session_state.key_index = 0
 
-def configure_current_key():
-    if st.session_state.key_index >= len(keys):
-        st.session_state.key_index = 0   
-    current_key = keys[st.session_state.key_index]
-    genai.configure(api_key=current_key)
-
-configure_current_key()
-
-# MODELUL (Gemini 2.5 Flash - cel rapid)
-model = genai.GenerativeModel("models/gemini-2.5-flash", 
-    system_instruction="""
-    ROL: Ești un profesor de liceu din România, universal (Mate, Fizică, Chimie, Literatură), bărbat, cu experiență în pregătirea pentru BAC.
+# --- PROMPT-UL SISTEMULUI (Definit o singură dată aici) ---
+SYSTEM_PROMPT = """
+ROL: Ești un profesor de liceu din România, universal (Mate, Fizică, Chimie, Literatură), bărbat, cu experiență în pregătirea pentru BAC.
     
     REGULI DE IDENTITATE (STRICT):
     1. Folosește EXCLUSIV genul masculin când vorbești despre tine.
@@ -167,30 +151,62 @@ model = genai.GenerativeModel("models/gemini-2.5-flash",
            - Dacă elevul încarcă o poză sau un PDF, analizează tot conținutul înainte de a răspunde.
            - Păstrează sensul original al textelor din manuale.
     """
-)
 
-# --- FUNCȚIE MAGICĂ PENTRU RETRY + STREAMING ---
-def send_message_with_rotation(chat_session, payload):
+# --- FUNCȚIE AVANSATĂ: GENERATOR CU ROTIRE ---
+def run_chat_with_rotation(history_obj, payload):
+    """
+    Această funcție gestionează tot: configurarea cheii, crearea modelului,
+    sesiunea de chat și streaming-ul. Dacă o cheie pică, o schimbă și reia totul de la zero.
+    """
     max_retries = len(keys)
+    
     for attempt in range(max_retries):
         try:
-            # stream=True este cheia vitezei
-            response = chat_session.send_message(payload, stream=True)
-            return response
+            # 1. Luăm cheia curentă și configurăm
+            if st.session_state.key_index >= len(keys):
+                 st.session_state.key_index = 0
+            
+            current_key = keys[st.session_state.key_index]
+            genai.configure(api_key=current_key)
+            
+            # 2. CREĂM MODELUL ȘI SESIUNEA AICI (CRITIC pentru rotire!)
+            # Trebuie recreate proaspăt cu noua cheie
+            model = genai.GenerativeModel("models/gemini-2.5-flash", system_instruction=SYSTEM_PROMPT)
+            chat = model.start_chat(history=history_obj)
+            
+            # 3. Trimitem mesajul
+            response_stream = chat.send_message(payload, stream=True)
+            
+            # 4. Returnăm bucățile de text (Yield)
+            # Iterăm AICI pentru a prinde eroarea în interiorul try/except-ul funcției
+            for chunk in response_stream:
+                if chunk.text:
+                    yield chunk.text
+            
+            # Dacă am terminat cu succes, ieșim din funcție
+            return 
+
         except Exception as e:
             error_msg = str(e)
-            # Coduri eroare limită: 429, ResourceExhausted
-            if "429" in error_msg or "ResourceExhausted" in error_msg or "Quota" in error_msg:
-                st.toast(f"⚠️ Schimb motorul AI... (Cheia {st.session_state.key_index + 1} epuizată)", icon="🔄")
+            # Verificăm erorile specifice de expirare
+            if "429" in error_msg or "ResourceExhausted" in error_msg or "Quota" in error_msg or "403" in error_msg:
+                # Notificare discretă
+                st.toast(f"⚠️ Cheia {st.session_state.key_index + 1} a expirat. Schimb pe următoarea...", icon="🔄")
+                print(f"Eroare cheie {st.session_state.key_index}: {e}")
+                
+                # Schimbăm indexul pentru tura următoare
                 st.session_state.key_index = (st.session_state.key_index + 1) % len(keys)
-                configure_current_key()
+                
+                # 'continue' va forța bucla 'for' să o ia de la capăt cu noua cheie
                 continue
             else:
+                # Dacă e altă eroare (ex: imagine coruptă), o aruncăm mai departe
                 raise e
-    raise Exception("Toate serverele sunt ocupate momentan.")
+    
+    raise Exception("Toate cheile API sunt epuizate. Revino mai târziu.")
 
 # ==========================================
-# 4. Sidebar & Upload
+# 4. INTERFAȚĂ
 # ==========================================
 st.title("🎓 Profesor Liceu")
 
@@ -211,11 +227,14 @@ with st.sidebar:
     
     if uploaded_file:
         file_type = uploaded_file.type
+        # Configuram cheia curenta si pt upload
+        genai.configure(api_key=keys[st.session_state.key_index])
+
         if "image" in file_type:
             media_content = Image.open(uploaded_file)
             st.image(media_content, caption="Imagine atașată", use_container_width=True)
         elif "pdf" in file_type:
-            st.info("📄 PDF Detectat. Se pregătește...")
+            st.info("📄 PDF Detectat. Se procesează...")
             try:
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                     tmp.write(uploaded_file.getvalue())
@@ -227,12 +246,12 @@ with st.sidebar:
                         time.sleep(1)
                         uploaded_pdf = genai.get_file(uploaded_pdf.name)  
                     media_content = uploaded_pdf
-                    st.success(f"✅ Gata! AI-ul a citit: {uploaded_file.name}")
+                    st.success(f"✅ Gata: {uploaded_file.name}")
             except Exception as e:
                 st.error(f"Eroare upload PDF: {e}")
 
 # ==========================================
-# 5. Chat Logic (Cu Streaming)
+# 5. CHAT
 # ==========================================
 
 if "messages" not in st.session_state or not st.session_state.messages:
@@ -248,49 +267,13 @@ if user_input := st.chat_input("Scrie aici..."):
     st.session_state.messages.append({"role": "user", "content": user_input})
     save_message_to_db(st.session_state.session_id, "user", user_input)
 
+    # Pregătim istoricul
     history_obj = []
     for msg in st.session_state.messages[:-1]:
         role_gemini = "model" if msg["role"] == "assistant" else "user"
         history_obj.append({"role": role_gemini, "parts": [msg["content"]]})
 
-    chat_session = model.start_chat(history=history_obj)
-
+    # Pregătim payload-ul curent
     final_payload = []
     if media_content:
-        final_payload.append("Te rog să analizezi acest document/imagine atașat:")
-        final_payload.append(media_content)
-    final_payload.append(user_input)
-
-    with st.chat_message("assistant"):
-        message_placeholder = st.empty()
-        full_response = ""
-        
-        try:
-            # Apelăm funcția cu STREAMING
-            response_stream = send_message_with_rotation(chat_session, final_payload)
-            
-            # Afișăm textul bucată cu bucată
-            for chunk in response_stream:
-                if chunk.text:
-                    full_response += chunk.text
-                    message_placeholder.markdown(full_response + "▌")
-            
-            # Text final curat
-            message_placeholder.markdown(full_response)
-            
-            # Salvare
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
-            save_message_to_db(st.session_state.session_id, "assistant", full_response)
-
-            # Audio după generare
-            if enable_audio:
-                with st.spinner("Generez vocea..."):
-                    clean_text = full_response.replace("*", "").replace("$", "")[:500]
-                    if clean_text:
-                        sound_file = BytesIO()
-                        tts = gTTS(text=clean_text, lang='ro')
-                        tts.write_to_fp(sound_file)
-                        st.audio(sound_file, format='audio/mp3')
-
-        except Exception as e:
-            st.error(f"Eroare: {e}")
+        final_payload.append("Te rog să analizezi acest document/imagine 
