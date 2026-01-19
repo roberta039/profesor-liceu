@@ -74,26 +74,41 @@ else:
     st.session_state.session_id = st.query_params["session_id"]
 
 # ==========================================
-# 3. ROTIRE API & CONFIGURARE
+# 3. ROTIRE API & CURĂȚARE CHEI (FIX ERROR 400)
 # ==========================================
 
-# Încărcăm cheile
-if "GOOGLE_API_KEY" in st.secrets:
-    keys = st.secrets["GOOGLE_API_KEY"]
-elif "GOOGLE_API_KEY" in st.secrets:
-    keys = [st.secrets["GOOGLE_API_KEY"]]
-else:
-    k = st.sidebar.text_input("API Key:", type="password")
-    keys = [k] if k else []
+# Încărcăm raw keys
+raw_keys = None
 
-if isinstance(keys, str):
-    try:
-        keys = ast.literal_eval(keys)
-    except:
-        keys = [keys]
+if "GOOGLE_API_KEYS" in st.secrets:
+    raw_keys = st.secrets["GOOGLE_API_KEYS"]
+elif "GOOGLE_API_KEY" in st.secrets:
+    raw_keys = [st.secrets["GOOGLE_API_KEY"]]
+else:
+    k = st.sidebar.text_input("API Key (Manual):", type="password")
+    raw_keys = [k] if k else []
+
+# Procesare și Curățare Robustă
+keys = []
+if raw_keys:
+    # Dacă e string simplu care arată a listă, îl convertim
+    if isinstance(raw_keys, str):
+        try:
+            raw_keys = ast.literal_eval(raw_keys)
+        except:
+            raw_keys = [raw_keys]
+            
+    # Curățăm fiecare cheie de spații și ghilimele
+    if isinstance(raw_keys, list):
+        for k in raw_keys:
+            if k and isinstance(k, str):
+                # .strip() scoate spațiile, .strip('"') scoate ghilimelele duble, .strip("'") pe cele simple
+                clean_k = k.strip().strip('"').strip("'")
+                if clean_k:
+                    keys.append(clean_k)
 
 if not keys:
-    st.warning("⚠️ Nu s-au găsit chei API.")
+    st.error("❌ Nu am găsit nicio cheie API validă. Verifică secrets.toml.")
     st.stop()
 
 if "key_index" not in st.session_state:
@@ -151,6 +166,7 @@ ROL: Ești un profesor de liceu din România, universal (Mate, Fizică, Chimie, 
            - Dacă elevul încarcă o poză sau un PDF, analizează tot conținutul înainte de a răspunde.
            - Păstrează sensul original al textelor din manuale.
     """
+)
 
 # --- FUNCȚIE AVANSATĂ: GENERATOR CU ROTIRE ---
 def run_chat_with_rotation(history_obj, payload):
@@ -169,6 +185,7 @@ def run_chat_with_rotation(history_obj, payload):
             genai.configure(api_key=current_key)
             
             # 2. CREĂM MODELUL ȘI SESIUNEA (CRITIC: În interiorul buclei)
+            # Folosim gemini-2.5-flash pentru că e rapid și stabil
             model = genai.GenerativeModel("models/gemini-2.5-flash", system_instruction=SYSTEM_PROMPT)
             chat = model.start_chat(history=history_obj)
             
@@ -185,17 +202,18 @@ def run_chat_with_rotation(history_obj, payload):
 
         except Exception as e:
             error_msg = str(e)
-            # Verificăm erorile de expirare
-            if "429" in error_msg or "ResourceExhausted" in error_msg or "Quota" in error_msg or "403" in error_msg:
-                st.toast(f"⚠️ Cheia {st.session_state.key_index + 1} a expirat. Schimb...", icon="🔄")
+            # Prindem erori de invaliditate (400) sau epuizare (429)
+            if "400" in error_msg or "429" in error_msg or "ResourceExhausted" in error_msg or "Quota" in error_msg or "API key not valid" in error_msg:
+                st.toast(f"⚠️ Cheia {st.session_state.key_index + 1} are probleme. Trec la următoarea...", icon="🔄")
                 
                 # Schimbăm indexul
                 st.session_state.key_index = (st.session_state.key_index + 1) % len(keys)
                 continue
             else:
+                # Alte erori (ex: imagine prea mare)
                 raise e
     
-    raise Exception("Toate cheile API sunt epuizate. Revino mai târziu.")
+    raise Exception("Toate cheile API au eșuat. Verifică lista din secrets.")
 
 # ==========================================
 # 4. INTERFAȚĂ
@@ -218,7 +236,7 @@ with st.sidebar:
     media_content = None 
     
     if uploaded_file:
-        # Configuram cheia curentă pt upload
+        # Configuram cheia curentă pt upload ca să nu crape File API
         genai.configure(api_key=keys[st.session_state.key_index])
         file_type = uploaded_file.type
 
@@ -268,7 +286,6 @@ if user_input := st.chat_input("Scrie aici..."):
     # Pregătim payload-ul curent
     final_payload = []
     if media_content:
-        # Linia de mai jos a fost reparată să fie pe un singur rând
         final_payload.append("Te rog să analizezi acest document/imagine atașat:")
         final_payload.append(media_content)
     final_payload.append(user_input)
@@ -302,4 +319,4 @@ if user_input := st.chat_input("Scrie aici..."):
                         st.audio(sound_file, format='audio/mp3')
 
         except Exception as e:
-            st.error(f"A apărut o eroare neașteptată: {e}")
+            st.error(f"Eroare: {e}")
