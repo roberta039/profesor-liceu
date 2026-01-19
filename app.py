@@ -4,40 +4,83 @@ from PIL import Image
 import tempfile
 from gtts import gTTS
 from io import BytesIO
+import sqlite3
+import uuid
+import time
 
 # 1. Configurare Pagină
 st.set_page_config(page_title="Profesor Liceu AI", page_icon="🎓", layout="wide")
 
-# CSS pentru un aspect mai curat
+# CSS pentru aspect
 st.markdown("""
 <style>
     .stChatMessage { ensure-font-size: 16px; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🎓 Profesor Liceu")
-st.caption("Matematică • Fizică • Chimie • Română")
+# ==========================================
+# 2. SISTEMUL DE MEMORIE (Bază de date)
+# ==========================================
 
-# 2. Configurare API Key
-# Încearcă să ia cheia din secrets, altfel o cere în sidebar
+def init_db():
+    conn = sqlite3.connect('chat_history.db')
+    c = conn.cursor()
+    # Creăm tabelul dacă nu există
+    c.execute('''CREATE TABLE IF NOT EXISTS history 
+                 (session_id TEXT, role TEXT, content TEXT, timestamp REAL)''')
+    conn.commit()
+    conn.close()
+
+def save_message_to_db(session_id, role, content):
+    conn = sqlite3.connect('chat_history.db')
+    c = conn.cursor()
+    c.execute("INSERT INTO history VALUES (?, ?, ?, ?)", (session_id, role, content, time.time()))
+    conn.commit()
+    conn.close()
+
+def load_history_from_db(session_id):
+    conn = sqlite3.connect('chat_history.db')
+    c = conn.cursor()
+    c.execute("SELECT role, content FROM history WHERE session_id=? ORDER BY timestamp ASC", (session_id,))
+    data = c.fetchall()
+    conn.close()
+    return [{"role": row[0], "content": row[1]} for row in data]
+
+def clear_history_db(session_id):
+    conn = sqlite3.connect('chat_history.db')
+    c = conn.cursor()
+    c.execute("DELETE FROM history WHERE session_id=?", (session_id,))
+    conn.commit()
+    conn.close()
+
+# Inițializăm baza de date la pornire
+init_db()
+
+# Gestionare Session ID (identificatorul elevului)
+if "session_id" not in st.query_params:
+    # Dacă nu are ID, generăm unul nou
+    new_id = str(uuid.uuid4())
+    st.query_params["session_id"] = new_id
+    st.session_state.session_id = new_id
+else:
+    # Dacă are ID în URL, îl folosim pe acela
+    st.session_state.session_id = st.query_params["session_id"]
+
+# ==========================================
+# 3. Configurare API
+# ==========================================
 if "GOOGLE_API_KEY" in st.secrets:
     api_key = st.secrets["GOOGLE_API_KEY"]
 else:
     api_key = st.sidebar.text_input("Introdu Google API Key:", type="password")
 
 if not api_key:
-    st.warning("Te rog introdu cheia API în sidebar pentru a începe.")
+    st.warning("Te rog introdu cheia API în sidebar.")
     st.stop()
 
 genai.configure(api_key=api_key)
-
-# --- CORECȚIE IMPORTANTĂ: Modelul corect este 2.5-flash ---
-FIXED_MODEL_ID = "models/gemini-2.5-flash"
-
-try:
-    model = genai.GenerativeModel(
-        FIXED_MODEL_ID,
-        system_instruction="""Ești un profesor universal (Mate, Fizică, Chimie, Literatură) răbdător și empatic.
+model = genai.GenerativeModel("models/gemini-2.5-flash", 
+    system_instruction="""Ești un profesor universal (Mate, Fizică, Chimie, Literatură) răbdător și empatic.
         
         REGULĂ STRICTĂ: Predă exact ca la școală (nivel Gimnaziu/Liceu). 
         NU confunda elevul cu detalii despre "aproximări" sau "lumea reală" (frecare, erori) decât dacă problema o cere specific.
@@ -69,121 +112,91 @@ try:
            - Dacă primești o carte, păstrează sensul original în rezumate/traduceri.
         """
     )
-except Exception as e:
-    st.error(f"Eroare la inițializarea modelului: {e}")
-    st.stop()
+# ==========================================
+# 4. Sidebar & Butoane
+# ==========================================
+st.title("🎓 Profesor Liceu - Memorie Persistentă")
 
-# 3. Sidebar - Opțiuni și Upload
-st.sidebar.header("⚙️ Configurare")
-enable_audio = st.sidebar.checkbox("🔊 Activează Vocea (Audio)", value=False)
+st.sidebar.header("⚙️ Opțiuni")
 
+# BUTON RESET TEMA
+if st.sidebar.button("🗑️ Temă Nouă (Șterge Memoria)", type="primary"):
+    clear_history_db(st.session_state.session_id)
+    st.session_state.messages = []
+    st.rerun()
+
+enable_audio = st.sidebar.checkbox("🔊 Activează Vocea", value=False)
 st.sidebar.divider()
-st.sidebar.header("📁 Materiale Ajutătoare")
-uploaded_files = st.sidebar.file_uploader("Încarcă o poză cu problema sau un PDF", type=["jpg", "png", "jpeg", "pdf"], accept_multiple_files=True)
 
-# Procesare Fișiere
-current_context_files = []
+uploaded_files = st.sidebar.file_uploader("Încarcă materiale (Poză/PDF)", type=["jpg", "png", "pdf"], accept_multiple_files=True)
 
+# Procesare imagini (pentru sesiunea curentă - imaginile nu se salvează în DB pt a nu o bloca)
+current_images = []
 if uploaded_files:
     for up_file in uploaded_files:
-        # IMAGINI: Le trimitem direct ca PIL (mai rapid decât upload_file)
         if "image" in up_file.type:
             img = Image.open(up_file)
-            current_context_files.append(img)
-            st.sidebar.image(img, caption=up_file.name, use_container_width=True)
-        
-        # PDF: Trebuie urcate prin API
-        elif "pdf" in up_file.type:
-            # Folosim hash-ul numelui pentru a nu reîncărca inutil (basic caching)
-            if "uploaded_pdfs" not in st.session_state:
-                st.session_state.uploaded_pdfs = {}
-            
-            if up_file.name not in st.session_state.uploaded_pdfs:
-                with st.spinner(f"Procesez PDF: {up_file.name}..."):
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                        tmp.write(up_file.getvalue())
-                        path = tmp.name
-                    try:
-                        uploaded_ref = genai.upload_file(path, mime_type="application/pdf")
-                        st.session_state.uploaded_pdfs[up_file.name] = uploaded_ref
-                        st.sidebar.success(f"✅ PDF Încărcat: {up_file.name}")
-                    except Exception as e:
-                        st.sidebar.error(f"Eroare PDF: {e}")
-            
-            # Adăugăm referința la context
-            if up_file.name in st.session_state.uploaded_pdfs:
-                current_context_files.append(st.session_state.uploaded_pdfs[up_file.name])
+            current_images.append(img)
+            st.sidebar.image(img, caption="Imagine încărcată", use_container_width=True)
 
-# 4. Chat History
-if "messages" not in st.session_state:
-    st.session_state["messages"] = []
+# ==========================================
+# 5. Încărcare Istoric și Chat
+# ==========================================
 
-# Afișare istoric
+# Încărcăm mesajele din DB în Session State dacă e gol
+if "messages" not in st.session_state or not st.session_state.messages:
+    db_messages = load_history_from_db(st.session_state.session_id)
+    st.session_state.messages = db_messages
+
+# Afișare mesaje anterioare
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
-        st.markdown(msg["content"]) # Markdown randează LaTeX automat
+        st.markdown(msg["content"])
 
-# 5. Input și Generare
-if user_input := st.chat_input("Întreabă profesorul... (ex: 'Rezolvă problema din poză')"):
+# ==========================================
+# 6. Logică Input Utilizator
+# ==========================================
+if user_input := st.chat_input("Întreabă profesorul..."):
     
-    # 1. Afișăm mesajul utilizatorului
+    # 1. Afișăm și salvăm mesajul utilizatorului
     st.session_state.messages.append({"role": "user", "content": user_input})
+    save_message_to_db(st.session_state.session_id, "user", user_input) # <--- SALVARE DB
     st.chat_message("user").write(user_input)
 
-    # 2. Construim payload-ul (Istoric + Fișiere curente + Întrebare nouă)
-    # Gemini generate_content e stateless, deci trimitem istoricul relevant manual sau folosim chat session
-    # Aici folosim abordarea manuală pentru flexibilitate cu fișierele
+    # 2. Pregătim Payload pentru AI
+    payload = []
+    if current_images:
+        payload.extend(current_images)
+    payload.append(user_input)
     
-    payload_content = []
-    
-    # Adăugăm fișierele (dacă există) la acest prompt curent
-    if current_context_files:
-        payload_content.extend(current_context_files)
-    
-    # Adăugăm textul întrebării
-    payload_content.append(user_input)
-
-    # Pregătim istoricul chat-ului pentru context (fără fișiere vechi ca să nu consumăm tokeni inutili, doar text)
+    # Construim istoricul pentru AI (fără a retrimite imagini vechi, doar text)
     history_obj = []
-    for msg in st.session_state.messages[:-1]: # Fără ultimul mesaj (care e cel curent)
+    for msg in st.session_state.messages[:-1]: 
         role_gemini = "model" if msg["role"] == "assistant" else "user"
         history_obj.append({"role": role_gemini, "parts": [msg["content"]]})
 
-    # Creăm sesiunea de chat
     chat_session = model.start_chat(history=history_obj)
 
+    # 3. Generăm răspunsul
     with st.chat_message("assistant"):
-        with st.spinner("Profesorul gândește... 🧠"):
+        with st.spinner("Gândesc..."):
             try:
-                # Trimitem mesajul (text + poze/pdf)
-                response = chat_session.send_message(payload_content)
+                response = chat_session.send_message(payload)
                 text_response = response.text
                 
-                # Afișăm răspunsul
                 st.markdown(text_response)
                 
-                # Salvăm în istoric
+                # 4. Salvăm răspunsul AI
                 st.session_state.messages.append({"role": "assistant", "content": text_response})
+                save_message_to_db(st.session_state.session_id, "assistant", text_response) # <--- SALVARE DB
 
-                # Generare Audio (Doar dacă e activat)
-                if enable_audio and len(text_response) > 0:
-                    try:
-                        # Curățăm textul pentru audio (scoatem LaTeX și markdown bold)
-                        clean_text = text_response.replace("*", "").replace("$", "").replace("#", "")
-                        # Limităm lungimea pentru audio ca să nu dureze o veșnicie
-                        if len(clean_text) > 1000:
-                            clean_text = clean_text[:1000] + "... explicația continuă în text."
+                # Audio (Opțional)
+                if enable_audio:
+                    clean_text = text_response.replace("*", "").replace("$", "")[:500]
+                    sound_file = BytesIO()
+                    tts = gTTS(text=clean_text, lang='ro')
+                    tts.write_to_fp(sound_file)
+                    st.audio(sound_file, format='audio/mp3')
 
-                        sound_file = BytesIO()
-                        tts = gTTS(text=clean_text, lang='ro')
-                        tts.write_to_fp(sound_file)
-                        st.audio(sound_file, format='audio/mp3')
-                        
-                    except Exception as e_audio:
-                        st.warning(f"Audio indisponibil momentan.")
-            
             except Exception as e:
-                st.error(f"A apărut o eroare: {e}")
-                # Dacă e eroare de siguranță, informăm elevul
-                if "safety" in str(e).lower():
-                    st.error("Mesajul a fost blocat de filtrele de siguranță. Încearcă să reformulezi.")
+                st.error(f"Eroare: {e}")
