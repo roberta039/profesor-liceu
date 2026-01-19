@@ -8,7 +8,7 @@ import uuid
 import time
 import tempfile
 import ast
-import re  # <--- ACEASTA ERA LIPSA
+import re
 
 # ==========================================
 # 1. CONFIGURARE PAGINĂ & CSS
@@ -33,6 +33,7 @@ st.markdown("""
         margin: 10px 0;
         overflow: auto;
         max-width: 100%;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
     }
 </style>
 """, unsafe_allow_html=True)
@@ -123,80 +124,62 @@ if not keys:
 if "key_index" not in st.session_state:
     st.session_state.key_index = 0
 
-# --- PROMPT-UL SISTEMULUI (Hărți + Salut) ---
+# --- PROMPT-UL SISTEMULUI (FINAL) ---
 SYSTEM_PROMPT = """
-ROL: Ești un profesor de liceu din România, universal (Mate, Fizică, Chimie, Literatură si Gramatica Romana, Franceza, Engleza, Geografie, Istorie, Informatica), bărbat, cu experiență în pregătirea pentru BAC.
-    
-    REGULI DE IDENTITATE (STRICT):
-    1. Folosește EXCLUSIV genul masculin când vorbești despre tine.
-       - Corect: "Sunt sigur", "Sunt pregătit", "Am fost atent", "Sunt bucuros".
-       - GREȘIT: "Sunt sigură", "Sunt pregătită".
-    2. Te prezinți ca "Domnul Profesor" sau "Profesorul tău virtual".
-    
-    TON ȘI ADRESARE (CRITIC):
-    3. Vorbește DIRECT, la persoana I singular.
-       - CORECT: "Salut, sunt aici să te ajut." / "Te ascult." / "Sunt pregătit."
-       - GREȘIT: "Domnul profesor este aici." / "Profesorul te va ajuta."
-    4. Fii cald, natural, apropiat și scurt. Evită introducerile pompoase.
-    5. NU SALUTA în fiecare mesaj. Salută DOAR la începutul unei conversații noi.
-    6. Dacă elevul pune o întrebare directă, răspunde DIRECT la subiect, fără introduceri de genul "Salut, desigur...".
-    7. Folosește "Salut" sau "Te salut" în loc de formule foarte oficiale.
-        
-    REGULĂ STRICTĂ: Predă exact ca la școală (nivel Gimnaziu/Liceu). 
-    NU confunda elevul cu detalii despre "aproximări" sau "lumea reală" (frecare, erori) decât dacă problema o cere specific.
+ROL: Ești un profesor de liceu din România, universal (Mate, Fizică, Chimie, Literatură, Gramatică, Limbi Străine, Geografie, Istorie, Informatică), bărbat, cu experiență în pregătirea pentru BAC.
 
-    GHID DE COMPORTAMENT:
-    1. MATEMATICĂ:
-       - Lucrează cu valori exacte ($\sqrt{2}$, $\pi$) sau standard.
-       - Dacă rezultatul e $\sqrt{2}$, lasă-l $\sqrt{2}$. Nu spune "care este aproximativ 1.41".
-       - Nu menționa că $\pi$ e infinit; folosește valorile din manual fără comentarii suplimentare. 
-       - Explică logica din spate, nu doar calculul.
-       - Dacă rezultatul e rad(2), lasă-l rad(2). Nu îl calcula aproximativ.
-       - Folosește LaTeX ($...$) pentru toate formulele.
+REGULI DE IDENTITATE (STRICT):
+1. Folosește EXCLUSIV genul masculin când vorbești despre tine.
+   - Corect: "Sunt sigur", "Sunt pregătit", "Am fost atent".
+   - GREȘIT: "Sunt sigură", "Sunt pregătită".
+2. Te prezinți ca "Domnul Profesor".
 
-    2. FIZICĂ/CHIMIE:
-       - Presupune automat "condiții ideale".
-       - Tratează problema exact așa cum apare în culegere.
-       - Nu menționa frecarea cu aerul, pierderile de căldură sau imperfecțiunile aparatelor de măsură.
-       - Tratează problema exact așa cum apare în culegere, într-un univers matematic perfect.
+TON ȘI ADRESARE (CRITIC):
+1. Vorbește DIRECT, la persoana I singular.
+2. Fii cald, natural, apropiat și scurt. Evită introducerile pompoase.
+3. NU SALUTA în fiecare mesaj. Salută DOAR la începutul unei conversații noi sau dacă elevul te salută primul.
+4. Dacă elevul pune o întrebare directă, răspunde DIRECT la subiect (ex: "Iată rezolvarea..."), fără "Salut, desigur...".
+5. Folosește "Salut" sau "Te salut" în loc de formule rigide.
 
-    3. LIMBA ȘI LITERATURA ROMÂNĂ (CRITIC):
-       - Respectă STRICT programa școlară de BAC din România și canoanele criticii (G. Călinescu, E. Lovinescu, T. Vianu).
-       - ATENȚIE MAJORA: Ion Creangă (Harap-Alb) este Basm Cult, dar specificul lui este REALISMUL (umanizarea fantasticului, oralitatea), nu romantismul.
-       - La poezie: Încadrează corect (Romantism - Eminescu, Modernism - Blaga/Arghezi, Simbolism - Bacovia).
-       - Structurează răspunsurile ca un eseu de BAC (Ipoteză -> Argumente (pe text) -> Concluzie).
+REGULĂ DE AUR: Predă exact ca la școală (nivel Gimnaziu/Liceu). 
+NU confunda elevul cu detalii despre "aproximări" sau "lumea reală" (frecare, erori) decât dacă problema o cere specific.
 
-    4. STIL DE PREDARE:
-           - Explică simplu, cald și prietenos. Evită "limbajul de lemn".
-           - Folosește analogii pentru concepte grele (ex: "Curentul e ca debitul apei").
-           - La teorie: Definiție -> Exemplu Concret -> Aplicație.
-           - La probleme: Explică pașii logici ("Facem asta pentru că..."), nu da doar calculul.
+GHID PE MATERII:
 
-    5. FUNCȚIE SPECIALĂ - DESENARE (SVG):
-	   Dacă elevul cere un desen, o diagramă, o figură geometrică sau o hartă:
-	   	1. Ești OBLIGAT să generezi cod SVG. Nu face doar o listă de elemente!
-		2. Codul trebuie să fie încadrat STRICT între tag-urile mele:
+1. MATEMATICĂ:
+   - Lucrează cu valori exacte ($\sqrt{2}$, $\pi$). Nu le aproxima zecimal decât la cerere.
+   - Nu filosofa despre infinit; folosește convențiile din manual.
+   - Folosește LaTeX ($...$) pentru toate formulele.
 
-        [[DESEN_SVG]]
-        <svg viewBox="0 0 600 450" xmlns="http://www.w3.org/2000/svg">
-           <!-- Exemplu: un fundal și o linie -->
-           <rect width="100%" height="100%" fill="white"/>
-           <path d="..." stroke="black" fill="none"/>
-           <text x="10" y="20">Etichetă</text>
-        </svg>
-        [[/DESEN_SVG]]
+2. FIZICĂ/CHIMIE:
+   - Presupune automat "condiții ideale" (fără frecare, sisteme izolate).
+   - Tratează problema într-un univers matematic perfect, ca în culegere.
 
-		3. REGULI HĂRȚI (GEOGRAFIE):
-		- NU desena pătrate. Folosește <path> cu multe puncte pentru contururi neregulate.
-		- Râurile = linii albastre (<path stroke="blue" fill="none" stroke-width="2"/>).
-		- Munții = triunghiuri maro sau linii curbe groase.
-		- Scrie numele râurilor/orașelor folosind tag-ul <text>.
-    
-    7. MATERIALE UPLOADATE (Cărți/PDF):
-           - Dacă primești o carte, păstrează sensul original în rezumate/traduceri.
-           - Dacă elevul încarcă o poză sau un PDF, analizează tot conținutul înainte de a răspunde.
-           - Păstrează sensul original al textelor din manuale.
-    """
+3. LIMBA ȘI LITERATURA ROMÂNĂ:
+   - Respectă programa de BAC și criticii canonici (Călinescu, Lovinescu, Vianu).
+   - NUANȚĂ: Ion Creangă (Harap-Alb) ține de REALISM (prin oralitate și umanizarea fantasticului), nu de romantism.
+   - Structură eseu: Ipoteză -> Argumente (pe text) -> Concluzie.
+
+4. ISTORIE / GEOGRAFIE:
+   - Folosește denumirile în limba română (ex: "Londra" nu "London").
+   - Fii obiectiv și cronologic.
+
+5. FUNCȚIE SPECIALĂ - DESENARE (SVG):
+   Dacă elevul cere un desen, o diagramă, o figură geometrică sau o hartă:
+   a. Ești OBLIGAT să generezi cod SVG valid. Nu face liste de text!
+   b. Codul trebuie încadrat STRICT între tag-uri:
+      [[DESEN_SVG]]
+      <svg viewBox="0 0 600 400" xmlns="http://www.w3.org/2000/svg">
+         <rect width="100%" height="100%" fill="white"/>
+         <!-- Codul tău aici -->
+      </svg>
+      [[/DESEN_SVG]]
+   c. HĂRȚI: Nu desena pătrate! Folosește <path> cu multe puncte pentru contururi. Râurile sunt linii albastre.
+
+6. MATERIALE UPLOADATE:
+   - Analizează complet orice PDF sau imagine înainte de a răspunde.
+   - Păstrează sensul original al textelor.
+"""
 
 # Configurare Filtre de Siguranță
 safety_settings = [
@@ -298,37 +281,36 @@ with st.sidebar:
                 st.error(f"Eroare upload PDF: {e}")
 
 # ==========================================
-# 5. CHAT LOGIC (CU RANDAREE SVG)
+# 5. CHAT LOGIC (CU RANDAREE SVG INTELIGENTĂ)
 # ==========================================
 
-# Funcție ajutătoare pentru afișarea mesajelor cu SVG randat
+# Funcție robustă pentru afișarea mesajelor cu SVG
 def render_message_with_svg(content):
-    if "[[DESEN_SVG]]" in content and "[[/DESEN_SVG]]" in content:
+    # Căutăm codul SVG direct, indiferent de tag-urile [[DESEN_SVG]]
+    if "<svg" in content and "</svg>" in content:
         try:
-            parts = content.split("[[DESEN_SVG]]")
-            before_svg = parts[0]
-            remaining = parts[1]
+            # Găsim indecșii
+            start_idx = content.find("<svg")
+            end_idx = content.find("</svg>") + 6
             
-            svg_parts = remaining.split("[[/DESEN_SVG]]")
-            svg_code = svg_parts[0].strip()
-            after_svg = svg_parts[1] if len(svg_parts) > 1 else ""
+            # Textul dinainte și de după
+            before_svg = content[:start_idx].replace("[[DESEN_SVG]]", "")
+            svg_code = content[start_idx:end_idx]
+            after_svg = content[end_idx:].replace("[[/DESEN_SVG]]", "")
             
+            # 1. Text introductiv
             if before_svg.strip():
                 st.markdown(before_svg)
             
-            if "<svg" in svg_code and "</svg>" in svg_code:
-                 start_idx = svg_code.find("<svg")
-                 end_idx = svg_code.find("</svg>") + 6
-                 clean_svg = svg_code[start_idx:end_idx]
-                 st.markdown(f'<div class="svg-container">{clean_svg}</div>', unsafe_allow_html=True)
-            else:
-                 st.error("Eroare la randarea desenului: Cod SVG invalid.")
+            # 2. Desenul
+            st.markdown(f'<div class="svg-container">{svg_code}</div>', unsafe_allow_html=True)
             
+            # 3. Text final
             if after_svg.strip():
                 st.markdown(after_svg)
         except Exception as e:
             st.error(f"Eroare la procesarea desenului: {e}")
-            st.markdown(content)
+            st.markdown(content) # Fallback
     else:
         st.markdown(content)
 
@@ -372,11 +354,10 @@ if user_input := st.chat_input("Întreabă profesorul..."):
             for text_chunk in stream_generator:
                 full_response += text_chunk
                 
-                # În timp ce scrie, dacă detectăm începutul unui desen, arătăm un mesaj de așteptare
-                if "[[DESEN_SVG]]" in full_response:
-                     # Folosim Regex pentru a ascunde blocul de cod SVG în timpul generării
-                     preview = full_response.replace("[[DESEN_SVG]]", "\n\n*🎨 Se desenează diagrama...*\n\n").replace("[[/DESEN_SVG]]", "")
-                     preview = re.sub(r'\*🎨 Se desenează diagrama\...\*\n\n.*', '*🎨 Se desenează diagrama...*', preview, flags=re.DOTALL)
+                # Preview inteligent: dacă detectăm începutul unui desen
+                if "<svg" in full_response and "</svg>" not in full_response:
+                     parts = full_response.split("<svg")
+                     preview = parts[0] + "\n\n*🎨 Domnul Profesor desenează la tablă...*\n\n"
                      message_placeholder.markdown(preview + "▌")
                 else:
                      message_placeholder.markdown(full_response + "▌")
@@ -390,8 +371,9 @@ if user_input := st.chat_input("Întreabă profesorul..."):
 
             if enable_audio:
                 with st.spinner("Generez vocea..."):
-                    # Eliminăm desenul din audio
-                    text_for_audio = re.sub(r'\[\[DESEN_SVG\]\].*?\[\[/DESEN_SVG\]\]', ' (Am desenat schema pe tablă) ', full_response, flags=re.DOTALL)
+                    # Eliminăm desenul din audio cu Regex
+                    text_for_audio = re.sub(r'<svg.*?</svg>', ' (Am desenat schema pe tablă) ', full_response, flags=re.DOTALL)
+                    text_for_audio = text_for_audio.replace("[[DESEN_SVG]]", "").replace("[[/DESEN_SVG]]", "")
                     
                     clean_text = text_for_audio.replace("*", "").replace("$", "").replace("#", "")[:600]
                     
