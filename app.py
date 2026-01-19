@@ -161,7 +161,6 @@ ROL: Ești un profesor de liceu din România, universal (Mate, Fizică, Chimie, 
            - Dacă elevul încarcă o poză sau un PDF, analizează tot conținutul înainte de a răspunde.
            - Păstrează sensul original al textelor din manuale.
     """
-)
 
 # Configurare Filtre de Siguranță
 safety_settings = [
