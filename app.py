@@ -10,15 +10,17 @@ import tempfile
 import ast
 
 # 1. Configurare Pagină
-st.set_page_config(page_title="Profesor Liceu AI", page_icon="🎓", layout="wide")
+# initial_sidebar_state="expanded" forțează meniul să stea deschis la pornire
+st.set_page_config(page_title="Profesor Liceu AI", page_icon="🎓", layout="wide", initial_sidebar_state="expanded")
 
+# CSS: Am scos liniile care ascundeau header-ul și meniul!
 st.markdown("""
 <style>
     .stChatMessage { font-size: 16px; }
     div.stButton > button:first-child { background-color: #ff4b4b; color: white; }
-    #MainMenu {visibility: hidden;}
+    
+    /* Am șters liniile care ascundeau header-ul pentru a putea folosi meniul */
     footer {visibility: hidden;}
-    header {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -111,7 +113,7 @@ if "key_index" not in st.session_state:
 
 # --- PROMPT-UL SISTEMULUI ---
 SYSTEM_PROMPT = """
-ROL: Ești un profesor de liceu din România, universal (Mate, Fizică, Chimie, Literatură, Istorie, Geografie, Engleza, Franceza, Informatica), bărbat, cu experiență în pregătirea pentru BAC.
+ROL: Ești un profesor de liceu din România, universal (Mate, Fizică, Chimie, Literatură), bărbat, cu experiență în pregătirea pentru BAC.
     
     REGULI DE IDENTITATE (STRICT):
     1. Folosește EXCLUSIV genul masculin când vorbești despre tine.
@@ -162,7 +164,7 @@ ROL: Ești un profesor de liceu din România, universal (Mate, Fizică, Chimie, 
            - Păstrează sensul original al textelor din manuale.
     """
 
-# Configurare Filtre de Siguranță (Să nu blocheze teme de biologie/istorie)
+# Configurare Filtre de Siguranță
 safety_settings = [
     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
     {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -182,7 +184,6 @@ def run_chat_with_rotation(history_obj, payload):
             current_key = keys[st.session_state.key_index]
             genai.configure(api_key=current_key)
             
-            # Creăm modelul cu setările de siguranță
             model = genai.GenerativeModel(
                 "models/gemini-2.5-flash", 
                 system_instruction=SYSTEM_PROMPT,
@@ -192,15 +193,12 @@ def run_chat_with_rotation(history_obj, payload):
             
             response_stream = chat.send_message(payload, stream=True)
             
-            # --- FIX PENTRU EROAREA DE STREAMING ---
             for chunk in response_stream:
-                # Verificăm în siguranță dacă există text
                 try:
                     text_part = chunk.text
                     if text_part:
                         yield text_part
                 except ValueError:
-                    # Dacă chunk-ul e gol (stop signal), îl ignorăm și continuăm
                     continue
             
             return 
